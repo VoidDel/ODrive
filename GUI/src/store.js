@@ -14,14 +14,14 @@ Vue.use(Vuex);
 export default new Vuex.Store({
     // state is the data for this app
     state: {
-        odrives: Object,
-        odriveConfigs: Object,
-        odriveParameters: Object,
-        odriveFunctions: Object,
-        axes: Array,
-        odriveServerAddress: String,
-        serverConnected: Boolean,
-        ODrivesConnected: Object,
+        odrives: {},
+        odriveConfigs: {},
+        odriveParameters: {},
+        odriveFunctions: {},
+        axes: [],
+        odriveServerAddress: '',
+        serverConnected: false,
+        ODrivesConnected: {},
         serverOutput: [],
         dashboards: [
             {

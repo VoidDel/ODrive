@@ -145,10 +145,22 @@ def sampledVarNames(message):
     
 @socketio.on('startSampling')
 def sendSamples(message):
-    print(session['samplingEnabled'])
-    while session['samplingEnabled']:
-        emit('sampledData', json.dumps(getSampledData(session['sampledVars'])))
-        time.sleep(0.02)
+    print("startSampling called, samplingEnabled:", session.get('samplingEnabled'))
+
+    def sampling_loop():
+        print("Sampling loop started in background thread")
+        while session.get('samplingEnabled', False):
+            try:
+                data = getSampledData(session['sampledVars'])
+                socketio.emit('sampledData', json.dumps(data))
+                time.sleep(0.02)
+            except Exception as e:
+                print(f"Error in sampling loop: {e}")
+                break
+        print("Sampling loop ended")
+
+    # Start sampling in a background thread
+    socketio.start_background_task(sampling_loop)
 
 @socketio.on('message')
 def handle_message(message):
@@ -157,43 +169,61 @@ def handle_message(message):
 
 @socketio.on('getODrives')
 def get_odrives(data):
+    print(">>> getODrives called, waiting for lock...")
     # spinlock
     while globals()['inUse']:
         time.sleep(0.1)
 
+    print(">>> getODrives acquired lock")
     globals()['inUse'] = True
     odriveDict = {}
     #for (index, odrv) in enumerate(globals()['odrives']):
     #    odriveDict["odrive" + str(index)] = dictFromRO(odrv)
     for key in globals()['odrives_status'].keys():
         if globals()['odrives_status'][key] == True:
+            print(f">>> Building dict for {key}...")
             odriveDict[key] = dictFromRO(globals()['odrives'][key])
+            print(f">>> Completed dict for {key}")
+    print(">>> getODrives releasing lock")
     globals()['inUse'] = False
     emit('odrives', json.dumps(odriveDict))
+    print(">>> getODrives completed")
 
 @socketio.on('getProperty')
 def get_property(message):
     # message is dict natively
     # will be {"path": "odriveX.axisY.blah.blah"}
+    print(f"<<< getProperty called for {message['path']}")
     while globals()['inUse']:
         time.sleep(0.1)
+    print(f"<<< getProperty acquired lock for {message['path']}")
     if globals()['odrives_status'][message["path"].split('.')[0]]:
         globals()['inUse'] = True
         val = getVal(globals()['odrives'], message["path"].split('.'))
         globals()['inUse'] = False
+        print(f"<<< getProperty released lock for {message['path']}")
         emit('ODriveProperty', json.dumps({"path": message["path"], "val": val}))
 
 @socketio.on('setProperty')
 def set_property(message):
+    print("!!!!! setProperty handler called !!!!! Message: " + str(message))
     # message is {"path":, "val":, "type":}
-    while globals()['inUse']:
-        time.sleep(0.1)
-    globals()['inUse'] = True
+    # TEMPORARILY DISABLE LOCK TO TEST
+    # while globals()['inUse']:
+    #     print("Waiting for lock...")
+    #     time.sleep(0.1)
+    print("Lock bypassed for testing")
+    # globals()['inUse'] = True
     print("From setProperty event handler: " + str(message))
+    print("Calling postVal...")
     postVal(globals()['odrives'], message["path"].split('.'), message["val"], message["type"])
+    print("postVal completed")
+    print("Getting value back...")
     val = getVal(globals()['odrives'], message["path"].split('.'))
-    globals()['inUse'] = False
+    print("Got value:", val)
+    # globals()['inUse'] = False
     emit('ODriveProperty', json.dumps({"path": message["path"], "val": val}))
+    print("Emitted response")
 
 @socketio.on('callFunction')
 def call_function(message):
@@ -270,6 +300,7 @@ def is_odrive_property(obj):
 
 def dictFromRO(RO):
     """Create dict from an ODrive RemoteObject that's suitable for sending as JSON."""
+    print(f"dictFromRO: Starting for object type {type(RO).__name__}")
     returnDict = {}
 
     for key in dir(RO):
@@ -363,30 +394,38 @@ def dictFromRO(RO):
             except:
                 pass
 
+    print(f"dictFromRO: Completed, returning dict with {len(returnDict)} keys")
     return returnDict
 
 def postVal(odrives, keyList, value, argType):
     # expect a list of keys in the form of ["key1", "key2", "keyN"]
     # "key1" will be "odriveN"
     # like this: postVal(odrives, ["odrive0","axis0","config","calibration_lockin","accel"], 17.0)
+    print(f"postVal called: keyList={keyList}, value={value}, argType={argType}")
     odrv = None
     try:
         odrv = keyList.pop(0)
+        print(f"ODrive: {odrv}")
         RO = odrives[odrv]
         keyList[-1] = '_' + keyList[-1] + '_property'
+        print(f"Modified keyList: {keyList}")
         for key in keyList:
             RO = getattr(RO, key)
+        print(f"Got remote object, type={argType}")
         if argType == "number":
-            await_if_coroutine(RO.exchange(float(value)))
+            print(f"Calling RO.write({float(value)})")
+            await_if_coroutine(RO.write(float(value)))
+            print("write() completed")
         elif argType == "boolean":
-            await_if_coroutine(RO.exchange(value))
+            await_if_coroutine(RO.write(value))
         elif argType == "string":
             if value == "Infinity":
-                await_if_coroutine(RO.exchange(math.inf))
+                await_if_coroutine(RO.write(math.inf))
             elif value == "-Infinity":
-                await_if_coroutine(RO.exchange(-math.inf))
+                await_if_coroutine(RO.write(-math.inf))
         else:
             pass # dont support that type yet
+        print("postVal completed successfully")
     except Exception as ex:
         # Check if it's a connection/object lost error
         error_str = str(ex).lower()
