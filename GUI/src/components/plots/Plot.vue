@@ -2,8 +2,8 @@
   <div class="card plot">
     <div class="plot-header">
       <button class="close-button" @click="deletePlot">X</button>
-      <button class="close-button" @click="exportCSV">Export</button>
-      <button class="close-button" @click="$emit('add-var', name)">+</button>
+      <button class="close-button" @click="exportCSV">{{ $t('plot.export') }}</button>
+      <button class="close-button" @click="$emit('add-var', name)">{{ $t('plot.addVariable') }}</button>
     </div>
     <line-chart v-if="loaded" :chart-data="datacollection" :options="dataOptions"></line-chart>
   </div>

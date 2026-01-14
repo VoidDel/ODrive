@@ -1,0 +1,150 @@
+{
+  "header": {
+    "menu": "菜单",
+    "exportDash": "导出仪表板",
+    "importDash": "导入仪表板",
+    "importConfig": "导入ODrive配置",
+    "exportConfig": "导出ODrive配置",
+    "startSampling": "开始采样",
+    "stopSampling": "停止采样",
+    "addDash": "添加仪表板",
+    "close": "关闭"
+  },
+  "start": {
+    "instruction": "要设置您的ODrive，请连接并通电。",
+    "troubleshoot": "遇到问题？点击此处查看调试输出"
+  },
+  "dashboard": {
+    "addControl": "添加控制",
+    "addSlider": "添加滑块",
+    "addFunction": "添加功能",
+    "addAction": "添加动作",
+    "addPlot": "添加绘图",
+    "parameters": "参数"
+  },
+  "plot": {
+    "export": "导出",
+    "addVariable": "+"
+  },
+  "axis": {
+    "labels": {
+      "axis": "轴",
+      "motor": "电机",
+      "encoder": "编码器",
+      "controller": "控制器"
+    },
+    "errorNone": "无"
+  },
+  "buttons": {
+    "clearErrors": "清除错误",
+    "back": "返回",
+    "next": "下一步",
+    "finish": "完成"
+  },
+  "wizard": {
+    "navTitle": "向导页面",
+    "calibrateMotor": "校准电机",
+    "calibrateEncoder": "校准编码器",
+    "calibrating": "校准中...",
+    "calSuccess": "校准成功！",
+    "calFailure": "校准失败",
+    "pages": {
+      "odrive": {
+        "title": "您有哪个ODrive版本？",
+        "link": "ODrive版本"
+      },
+      "brake": {
+        "title": "制动电阻",
+        "link": "制动电阻",
+        "noBrake": "我没有制动电阻"
+      },
+      "motor": {
+        "title": "您在轴{axis}上使用哪个电机？",
+        "link": "电机{axis}",
+        "otherMotor": "其他电机"
+      },
+      "encoder": {
+        "title": "您在轴{axis}上使用哪个编码器？",
+        "link": "编码器{axis}"
+      },
+      "control": {
+        "title": "轴{axis}的控制模式",
+        "link": "控制模式{axis}"
+      },
+      "misc": {
+        "title": "轴{axis}的最后设置",
+        "link": "其他{axis}",
+        "miscParams": "其他参数"
+      },
+      "done": {
+        "title": "全部完成！",
+        "link": "结束"
+      }
+    },
+    "choices": {
+      "odrive24v": "ODrive v3.6 24V",
+      "odrive56v": "ODrive v3.6 56V",
+      "brakeResistor": "制动电阻",
+      "noBrakeResistor": "我没有制动电阻",
+      "d5065": "ODrive D5065",
+      "d6374": "ODrive D6374",
+      "otherMotor": "其他电机",
+      "cuiAmt102v": "CUI AMT102V",
+      "hallEffect": "霍尔效应",
+      "incrementalNoIndex": "增量编码器（无索引）",
+      "incrementalWithIndex": "增量编码器（有索引）",
+      "positionControl": "位置控制",
+      "velocityControl": "速度控制",
+      "torqueControl": "力矩控制",
+      "voltageControl": "电压控制"
+    },
+    "tooltips": {
+      "makeChoice": "请做出选择！",
+      "brakeResistor": "当您减速电机时，能量必须有去处。它要么进入制动电阻，要么返回到您的电源。",
+      "noBrake": "只有当您的电源可以处理反向电流时（如电池），才能在没有制动电阻的情况下运行。",
+      "motorCal": "ODrive需要知道您的电机的电感和电阻才能控制它。点击校准电机按钮开始测量过程。电机在校准期间会发出蜂鸣声。",
+      "motorCalNext": "ODrive需要知道您的电机的电感和电阻才能控制它。点击校准电机按钮开始测量过程。电机在校准期间会发出蜂鸣声。",
+      "d5065": "来自ODrive商店的D5065电机",
+      "d6374": "来自ODrive商店的D6374电机",
+      "otherMotor": "使用您自己的电机！",
+      "cuiEncoder": "来自ODrive商店的增量8192cpr编码器",
+      "hallEffect": "如果您的电机是'有传感器'的，并且您没有其他编码器，请选择此选项",
+      "incrementalNoIndex": "通用增量编码器（无索引）。将cpr设置为4 * PPR（每转脉冲数）。",
+      "incrementalWithIndex": "通用增量编码器（有索引）。将cpr设置为4 * PPR（每转脉冲数）。",
+      "encoderCalNext": "ODrive需要知道编码器位置和电机位置之间的关系才能正常工作。点击校准编码器按钮开始测量过程。电机将在校准期间缓慢来回旋转。",
+      "motorCalFail": "仔细检查您的电机连接。如果连接良好，可能是您的电机具有比ODrive预期更高的电阻或更低的电感。",
+      "encoderCalFail": "仔细检查您的编码器连接。如果连接良好，说明您的电机极对数或编码器cpr设置错误。",
+      "positionControl": "保持特定位置",
+      "velocityControl": "保持特定速度",
+      "torqueControl": "保持特定力矩",
+      "voltageControl": "直接电压控制"
+    },
+    "motorParams": {
+      "kv": "KV值 =",
+      "polePairs": "极对数 =",
+      "phaseResistance": "相电阻 =",
+      "phaseInductance": "相电感 =",
+      "ohms": "[欧姆]",
+      "henries": "[亨利]"
+    }
+  },
+  "technical": {
+    "axis": "轴",
+    "encoder": "编码器",
+    "calibration": "校准",
+    "polePairs": "极对数",
+    "phaseResistance": "相电阻",
+    "phaseInductance": "相电感",
+    "cpr": "每转计数",
+    "hallEffect": "霍尔效应",
+    "closedLoopControl": "闭环控制",
+    "sensorlessControl": "无传感器控制",
+    "torqueControl": "力矩控制",
+    "velocityControl": "速度控制",
+    "positionControl": "位置控制",
+    "brakeResistor": "制动电阻",
+    "gimbalMotor": "云台电机",
+    "startupSequence": "启动序列",
+    "currentLimit": "电流限制"
+  }
+}

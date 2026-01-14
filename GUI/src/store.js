@@ -37,9 +37,13 @@ export default new Vuex.Store({
         currentDash: "Start",
         firstConn: false,
         wizardMotor: "odrive0",
+        currentLocale: "en",
     },
     // mutations are functions that change the data
     mutations: {
+        setLocale(state, locale) {
+            state.currentLocale = locale;
+        },
         setWizardMotor(state, odrive) {
             // odrive is string, "odrive0" or "odriveN"
             state.wizardMotor = odrive;

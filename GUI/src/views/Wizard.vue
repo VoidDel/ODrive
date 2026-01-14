@@ -2,7 +2,7 @@
   <div class="wizard">
     <div class="wizard-container">
       <div class="wizard-nav card">
-        <span class="wizard-nav-title">Wizard Pages</span>
+        <span class="wizard-nav-title">{{ $t('wizard.navTitle') }}</span>
         <span
           v-for="page in wizardPages"
           :key="page.title"
@@ -11,7 +11,7 @@
             'active-link': currentStep == page,
             'finished-page': page.choiceMade,
           }"
-          >{{ page.link }}</span
+          >{{ getPageLink(page) }}</span
         >
       </div>
       <div class="wizard-page">
@@ -19,7 +19,7 @@
           :choices="currentStep.choices"
           :customComponents="currentStep.customComponents"
           :pageComponents="currentStep.pageComponents"
-          :title="currentStep.title"
+          :title="translatedTitle"
           :config="wizardConfig"
           :calibrating="calibrating"
           :calStatus="calStatus"
@@ -29,20 +29,20 @@
         />
         <div class="wizard-controls">
           <!-- show breadcrumbs, back, apply, next buttons -->
-          <button class="wizard-button card" @click="back">Back</button>
-          <button class="wizard-button card" @click="finish">Finish</button>
+          <button class="wizard-button card" @click="back">{{ $t('buttons.back') }}</button>
+          <button class="wizard-button card" @click="finish">{{ $t('buttons.finish') }}</button>
           <button
             class="wizard-button card"
             :class="{ 'next-green': choiceMade }"
             v-tooltip.right="{
-              content: currentStep.nextTooltip,
+              content: translatedNextTooltip,
               class: 'tooltip-custom tooltip-other-custom fade-in',
               delay: 0,
               visible: !choiceMade && currentStep.nextTooltip != null,
             }"
             @click="next"
           >
-            Next
+            {{ $t('buttons.next') }}
           </button>
         </div>
       </div>
@@ -85,8 +85,76 @@ export default {
     wizardPages() {
       return pages;
     },
+    translatedTitle() {
+      // Translate wizard page titles dynamically
+      if (this.currentStep == pages.ODrive) {
+        return this.$t('wizard.pages.odrive.title');
+      } else if (this.currentStep == pages.Brake) {
+        return this.$t('wizard.pages.brake.title');
+      } else if (this.currentStep == pages.Motor_0) {
+        return this.$t('wizard.pages.motor.title', { axis: 0 });
+      } else if (this.currentStep == pages.Motor_1) {
+        return this.$t('wizard.pages.motor.title', { axis: 1 });
+      } else if (this.currentStep == pages.Encoder_0) {
+        return this.$t('wizard.pages.encoder.title', { axis: 0 });
+      } else if (this.currentStep == pages.Encoder_1) {
+        return this.$t('wizard.pages.encoder.title', { axis: 1 });
+      } else if (this.currentStep == pages.Control_0) {
+        return this.$t('wizard.pages.control.title', { axis: 0 });
+      } else if (this.currentStep == pages.Control_1) {
+        return this.$t('wizard.pages.control.title', { axis: 1 });
+      } else if (this.currentStep == pages.Misc_0) {
+        return this.$t('wizard.pages.misc.title', { axis: 0 });
+      } else if (this.currentStep == pages.Misc_1) {
+        return this.$t('wizard.pages.misc.title', { axis: 1 });
+      } else if (this.currentStep == pages.Done) {
+        return this.$t('wizard.pages.done.title');
+      }
+      return this.currentStep.title;
+    },
+    translatedNextTooltip() {
+      // Translate nextTooltip for the Next button
+      const tooltip = this.currentStep.nextTooltip;
+      if (!tooltip) return "";
+
+      if (tooltip.includes("Make a choice")) {
+        return this.$t('wizard.tooltips.makeChoice');
+      } else if (tooltip.includes("inductance and resistance of your motor")) {
+        return this.$t('wizard.tooltips.motorCalNext');
+      } else if (tooltip.includes("relation between the encoder position")) {
+        return this.$t('wizard.tooltips.encoderCalNext');
+      }
+      return tooltip;
+    },
   },
   methods: {
+    getPageLink(page) {
+      // Translate wizard page navigation links
+      if (page == pages.ODrive) {
+        return this.$t('wizard.pages.odrive.link');
+      } else if (page == pages.Brake) {
+        return this.$t('wizard.pages.brake.link');
+      } else if (page == pages.Motor_0) {
+        return this.$t('wizard.pages.motor.link', { axis: 0 });
+      } else if (page == pages.Motor_1) {
+        return this.$t('wizard.pages.motor.link', { axis: 1 });
+      } else if (page == pages.Encoder_0) {
+        return this.$t('wizard.pages.encoder.link', { axis: 0 });
+      } else if (page == pages.Encoder_1) {
+        return this.$t('wizard.pages.encoder.link', { axis: 1 });
+      } else if (page == pages.Control_0) {
+        return this.$t('wizard.pages.control.link', { axis: 0 });
+      } else if (page == pages.Control_1) {
+        return this.$t('wizard.pages.control.link', { axis: 1 });
+      } else if (page == pages.Misc_0) {
+        return this.$t('wizard.pages.misc.link', { axis: 0 });
+      } else if (page == pages.Misc_1) {
+        return this.$t('wizard.pages.misc.link', { axis: 1 });
+      } else if (page == pages.Done) {
+        return this.$t('wizard.pages.done.link');
+      }
+      return page.link;
+    },
     // certain actions, like starting motor or encoder calibration,
     // require special handling. This function is used for those events
     async pageEventHandler(e) {

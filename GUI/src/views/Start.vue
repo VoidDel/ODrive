@@ -4,12 +4,12 @@
       <img alt="Odrive Logo" src="../assets/odrive_logo.png">
     </div>
     <div class="home_text">
-      To set up your ODrive, connect it and power it up.
+      {{ $t('start.instruction') }}
     </div>
     <div class="connected-container">
       <input type="text" :class="{ notConnected: notConnected, connected: connected}" v-on:change="setUrl" :value="serverAddress">
     </div>
-    <button class="show-msg-button" @click="showServerMessages = !showServerMessages;">Having trouble? Click here for debug output</button>
+    <button class="show-msg-button" @click="showServerMessages = !showServerMessages;">{{ $t('start.troubleshoot') }}</button>
     <div class="server-msgs" v-if="showServerMessages">
       <div class="server-msg" v-for="(msg, index) in serverMessages" :key="msg + index">{{msg}}</div>
     </div>

@@ -14,7 +14,7 @@ export default {
   },
   computed: {
     text() {
-      return this.calibrating ? "Calibrating..." : "Calibrate Encoder";
+      return this.calibrating ? this.$t('wizard.calibrating') : this.$t('wizard.calibrateEncoder');
     }
   },
   methods: {

@@ -1,7 +1,7 @@
 <template>
   <div class="cal-message"
     v-tooltip.top="{
-            content: data.tooltip,
+            content: tooltip,
             class: 'tooltip-custom tooltip-other-custom fade-in',
             delay: 0,
             visible: !calStatus,
@@ -18,13 +18,21 @@ export default {
   },
   computed: {
     message() {
-      let retmsg = "";
       if (this.calStatus == true) {
-        retmsg = this.data.success;
+        return this.$t('wizard.calSuccess');
       } else if (this.calStatus == false) {
-        retmsg = this.data.failure;
+        return this.$t('wizard.calFailure');
       }
-      return retmsg;
+      return "";
+    },
+    tooltip() {
+      // Return translated tooltip based on which calibration failed
+      if (this.data.tooltip && this.data.tooltip.includes('motor')) {
+        return this.$t('wizard.tooltips.motorCalFail');
+      } else if (this.data.tooltip && this.data.tooltip.includes('encoder')) {
+        return this.$t('wizard.tooltips.encoderCalFail');
+      }
+      return this.data.tooltip || "";
     },
   },
 };

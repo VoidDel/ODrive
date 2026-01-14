@@ -1,4 +1,26 @@
-# odrive_gui
+# ODrive GUI
+
+[English](#odrive-gui) | [中文](README.zh.md)
+
+A desktop application for configuring and controlling ODrive motor controllers.
+
+## Features
+
+- **Internationalization (i18n)**: Full support for English and Chinese languages
+- Interactive dashboard with real-time plotting
+- Step-by-step setup wizard for motor configuration
+- Live parameter tuning and monitoring
+- Motor and encoder calibration tools
+
+## Language Support
+
+The GUI supports multiple languages. Click the language button in the header to switch between:
+- **English** (Default)
+- **中文** (Chinese)
+
+Your language preference is automatically saved and will be restored when you reopen the application.
+
+## Requirements
 
 Python requirements: `pip install flask flask_socketio flask_cors odrive`
 
@@ -58,6 +80,43 @@ sudo apt install phantomjs
 ```
 
 After it is installed, `npm run electron:build` can be used to build the AppImage for ARM
+
+## Internationalization (i18n)
+
+The GUI uses [vue-i18n](https://kazupon.github.io/vue-i18n/) for internationalization.
+
+### Translation Files
+
+Translation files are located in `src/locales/`:
+- `en.json` - English translations
+- `zh.json` - Chinese translations (中文翻译)
+- `index.js` - i18n configuration
+
+### Adding a New Language
+
+1. Create a new translation file in `src/locales/` (e.g., `ja.json` for Japanese)
+2. Copy the structure from `en.json` and translate all strings
+3. Import and add the new locale in `src/locales/index.js`:
+   ```javascript
+   import ja from './ja.json'
+
+   export default {
+     en,
+     zh,
+     ja  // Add your new language here
+   }
+   ```
+4. Add a language switcher option in `src/App.vue` if needed
+
+### Translation Coverage
+
+- ✅ Application header and navigation
+- ✅ Start/setup page
+- ✅ Dashboard controls and buttons
+- ✅ Wizard (all pages, choices, and tooltips)
+- ✅ Calibration messages
+- ✅ Error labels and status messages
+- ✅ Plot controls
 
 ### Customize configuration
 See [Configuration Reference](https://cli.vuejs.org/config/).

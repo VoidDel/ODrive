@@ -5,7 +5,7 @@
       <div class="card dropdown-content">
         <div>
           <button class="close-button" @click="hideTree">X</button>
-          Parameters
+          {{ $t('dashboard.parameters') }}
         </div>
         <div class="param-tree">
         <json-view
@@ -30,9 +30,9 @@
           />
         </template>
         <div class="control-buttons">
-          <div class="add-button card" @click="addComponent('control')">Add Control</div>
-          <div class="add-button card" @click="addComponent('slider')">Add Slider</div>
-          <div class="add-button card" @click="addComponent('function')">Add Function</div>
+          <div class="add-button card" @click="addComponent('control')">{{ $t('dashboard.addControl') }}</div>
+          <div class="add-button card" @click="addComponent('slider')">{{ $t('dashboard.addSlider') }}</div>
+          <div class="add-button card" @click="addComponent('function')">{{ $t('dashboard.addFunction') }}</div>
         </div>
         <template v-for="(action, index) in dash.actions">
           <component
@@ -46,7 +46,7 @@
             :options="action.options"
           />
         </template>
-        <div class="add-button card" @click="addComponent('action')">Add Action</div>
+        <div class="add-button card" @click="addComponent('action')">{{ $t('dashboard.addAction') }}</div>
       </div>
       <div class="plots">
         <template v-for="(plot, index) in dash.plots">
@@ -58,7 +58,7 @@
             v-on:add-var="currentPlot=plot.name;addComponent('plot')"
           />
         </template>
-        <div class="add-button card" @click="addPlot">Add Plot</div>
+        <div class="add-button card" @click="addPlot">{{ $t('dashboard.addPlot') }}</div>
       </div>
     </div>
   </div>

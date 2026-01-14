@@ -1,0 +1,150 @@
+{
+  "header": {
+    "menu": "Menu",
+    "exportDash": "Export dash",
+    "importDash": "Import dash",
+    "importConfig": "Import ODrive config",
+    "exportConfig": "Export ODrive config",
+    "startSampling": "start sampling",
+    "stopSampling": "stop sampling",
+    "addDash": "Add Dashboard",
+    "close": "X"
+  },
+  "start": {
+    "instruction": "To set up your ODrive, connect it and power it up.",
+    "troubleshoot": "Having trouble? Click here for debug output"
+  },
+  "dashboard": {
+    "addControl": "Add Control",
+    "addSlider": "Add Slider",
+    "addFunction": "Add Function",
+    "addAction": "Add Action",
+    "addPlot": "Add Plot",
+    "parameters": "Parameters"
+  },
+  "plot": {
+    "export": "Export",
+    "addVariable": "+"
+  },
+  "axis": {
+    "labels": {
+      "axis": "axis",
+      "motor": "motor",
+      "encoder": "encoder",
+      "controller": "controller"
+    },
+    "errorNone": "none"
+  },
+  "buttons": {
+    "clearErrors": "Clear Errors",
+    "back": "Back",
+    "next": "Next",
+    "finish": "Finish"
+  },
+  "wizard": {
+    "navTitle": "Wizard Pages",
+    "calibrateMotor": "Calibrate Motor",
+    "calibrateEncoder": "Calibrate Encoder",
+    "calibrating": "Calibrating...",
+    "calSuccess": "Calibration succeeded!",
+    "calFailure": "Calibration failed",
+    "pages": {
+      "odrive": {
+        "title": "Which ODrive do you have?",
+        "link": "ODrive Version"
+      },
+      "brake": {
+        "title": "Brake Resistor",
+        "link": "Brake Resistor",
+        "noBrake": "I don't have a brake resistor"
+      },
+      "motor": {
+        "title": "Which motor are you using on Axis {axis}?",
+        "link": "Motor {axis}",
+        "otherMotor": "Other Motor"
+      },
+      "encoder": {
+        "title": "Which encoder are you using for Axis {axis}?",
+        "link": "Encoder {axis}"
+      },
+      "control": {
+        "title": "Control mode for Axis {axis}",
+        "link": "Control Modes {axis}"
+      },
+      "misc": {
+        "title": "Finishing touches for Axis {axis}",
+        "link": "Misc {axis}",
+        "miscParams": "Miscellaneous Parameters"
+      },
+      "done": {
+        "title": "All done!",
+        "link": "End"
+      }
+    },
+    "choices": {
+      "odrive24v": "ODrive v3.6 24V",
+      "odrive56v": "ODrive v3.6 56V",
+      "brakeResistor": "Brake Resistor",
+      "noBrakeResistor": "I don't have a brake resistor",
+      "d5065": "ODrive D5065",
+      "d6374": "ODrive D6374",
+      "otherMotor": "Other Motor",
+      "cuiAmt102v": "CUI AMT102V",
+      "hallEffect": "Hall Effect",
+      "incrementalNoIndex": "Incremental Without Index",
+      "incrementalWithIndex": "Incremental With Index",
+      "positionControl": "Position Control",
+      "velocityControl": "Velocity Control",
+      "torqueControl": "Torque Control",
+      "voltageControl": "Voltage Control"
+    },
+    "tooltips": {
+      "makeChoice": "Make a choice!",
+      "brakeResistor": "When you slow down a motor, the energy has to go somewhere. It either goes to the brake resistor or back to your power supply.",
+      "noBrake": "Only operate without a brake resistor if your power source can handle reverse current, like a battery.",
+      "motorCal": "ODrive needs to know the inductance and resistance of your motor in order to control it. Click the Calibrate Motor button to start the measurement process. The motor will beep during calibration.",
+      "motorCalNext": "ODrive needs to know the inductance and resistance of your motor in order to control it. Click the Calibrate Motor button to start the measurement process. The motor will beep during calibration.",
+      "d5065": "D5065 motor from the ODrive shop",
+      "d6374": "D6374 motor from the ODrive shop",
+      "otherMotor": "Bring your own motor!",
+      "cuiEncoder": "Incremental 8192cpr encoder from the ODrive shop",
+      "hallEffect": "If your motor is 'sensored' and you don't have another encoder, select this option",
+      "incrementalNoIndex": "Generic incremental encoder without index. Set cpr to 4 * PPR (pulses per revolution).",
+      "incrementalWithIndex": "Generic incremental encoder with index. Set cpr to 4 * PPR (pulses per revolution).",
+      "encoderCalNext": "ODrive needs to know the relation between the encoder position and motor position in order to function. Click the Calibrate Encoder button to start the measurement process. The motor will slowly rotate back and forth during calibration.",
+      "motorCalFail": "Double check your motor connections. If the connections are good, it is possible that your motor has a higher resistance or lower inductance than ODrive expects.",
+      "encoderCalFail": "Double check your encoder connections. If the connections are good, you have a wrong setting for motor pole pairs or encoder cpr.",
+      "positionControl": "Maintain a specific position",
+      "velocityControl": "Maintain a specific speed",
+      "torqueControl": "Maintain a specific torque",
+      "voltageControl": "Direct voltage control"
+    },
+    "motorParams": {
+      "kv": "KV =",
+      "polePairs": "Pole Pairs =",
+      "phaseResistance": "Phase Resistance =",
+      "phaseInductance": "Phase Inductance =",
+      "ohms": "[Ohms]",
+      "henries": "[Henries]"
+    }
+  },
+  "technical": {
+    "axis": "axis",
+    "encoder": "encoder",
+    "calibration": "calibration",
+    "polePairs": "pole pairs",
+    "phaseResistance": "phase resistance",
+    "phaseInductance": "phase inductance",
+    "cpr": "CPR",
+    "hallEffect": "Hall effect",
+    "closedLoopControl": "closed loop control",
+    "sensorlessControl": "sensorless control",
+    "torqueControl": "torque control",
+    "velocityControl": "velocity control",
+    "positionControl": "position control",
+    "brakeResistor": "brake resistor",
+    "gimbalMotor": "gimbal motor",
+    "startupSequence": "startup sequence",
+    "currentLimit": "current limit"
+  }
+}

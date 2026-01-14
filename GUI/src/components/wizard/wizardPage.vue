@@ -15,12 +15,12 @@
           :data="choice.data"
           :config="config"
           :axis="axis"
-          :title="choice.title"
+          :title="translateChoice(choice.title)"
           :selected="selectedChoice == choice.title"
           :hooks="choice.hooks"
           :allowed="requirementsMet(choice.requirements, config)"
           v-tooltip.top="{
-            content: requirementsMet(choice.requirements, config) ? choice.tooltip : choice.altTooltip,
+            content: requirementsMet(choice.requirements, config) ? translateTooltip(choice.tooltip) : translateTooltip(choice.altTooltip),
             class: 'tooltip-custom tooltip-other-custom fade-in',
             delay: 0,
             visible: choice.tooltip!=null,
@@ -95,6 +95,55 @@ export default {
     };
   },
   methods: {
+    translateChoice(title) {
+      // Map choice titles to translation keys
+      const choiceMap = {
+        "ODrive v3.6 24V": "wizard.choices.odrive24v",
+        "ODrive v3.6 56V": "wizard.choices.odrive56v",
+        "Brake Resistor": "wizard.choices.brakeResistor",
+        "I don't have a brake resistor": "wizard.choices.noBrakeResistor",
+        "ODrive D5065": "wizard.choices.d5065",
+        "ODrive D6374": "wizard.choices.d6374",
+        "Other Motor": "wizard.choices.otherMotor",
+        "CUI AMT102V": "wizard.choices.cuiAmt102v",
+        "Hall Effect": "wizard.choices.hallEffect",
+        "Incremental Without Index": "wizard.choices.incrementalNoIndex",
+        "Incremental With Index": "wizard.choices.incrementalWithIndex",
+        "Position Control": "wizard.choices.positionControl",
+        "Velocity Control": "wizard.choices.velocityControl",
+        "Torque Control": "wizard.choices.torqueControl",
+        "Voltage Control": "wizard.choices.voltageControl",
+      };
+      return choiceMap[title] ? this.$t(choiceMap[title]) : title;
+    },
+    translateTooltip(tooltip) {
+      if (!tooltip) return tooltip;
+      // Map tooltip content to translation keys
+      const tooltipMap = {
+        "When you slow down a motor, the energy has to go somewhere": "wizard.tooltips.brakeResistor",
+        "Only operate without a brake resistor if your power source can handle reverse current": "wizard.tooltips.noBrake",
+        "D5065 motor from the ODrive shop": "wizard.tooltips.d5065",
+        "D6374 motor from the ODrive shop": "wizard.tooltips.d6374",
+        "Bring your own motor!": "wizard.tooltips.otherMotor",
+        "Incremental 8192cpr encoder from the ODrive shop": "wizard.tooltips.cuiEncoder",
+        "If your motor is 'sensored' and you don't have another encoder": "wizard.tooltips.hallEffect",
+        "Generic incremental encoder without index": "wizard.tooltips.incrementalNoIndex",
+        "Generic incremental encoder with index": "wizard.tooltips.incrementalWithIndex",
+        "Maintain a specific position": "wizard.tooltips.positionControl",
+        "Maintain a specific speed": "wizard.tooltips.velocityControl",
+        "Maintain a specific torque": "wizard.tooltips.torqueControl",
+        "Direct voltage control": "wizard.tooltips.voltageControl",
+        "Make a choice!": "wizard.tooltips.makeChoice",
+      };
+
+      // Check for partial matches
+      for (const [key, value] of Object.entries(tooltipMap)) {
+        if (tooltip.includes(key)) {
+          return this.$t(value);
+        }
+      }
+      return tooltip;
+    },
     handleCustomChoice(e) {
       console.log(e);
       this.$emit("choice", e);

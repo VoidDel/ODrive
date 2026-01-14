@@ -1,24 +1,24 @@
 <template>
   <div class="card wizard-motor-custom wizard-choice" :class="{'choice-inactive': !allowed}">
     <div class="left">
-      <span>KV =</span>
+      <span>{{ $t('wizard.motorParams.kv') }}</span>
       <input type="number" v-on:change="setKV" placeholder="Change Me!" />
     </div>
     <div class="left">
-      <span>Pole Pairs =</span>
+      <span>{{ $t('wizard.motorParams.polePairs') }}</span>
       <input type="number" v-on:change="setPP" placeholder="Change Me!" />
     </div>
     <div class="left">
-      <span>Phase Resistance =</span>
+      <span>{{ $t('wizard.motorParams.phaseResistance') }}</span>
       <span>{{" " + resistance}}</span>
-      <span class="unit">[Ohms]</span>
+      <span class="unit">{{ $t('wizard.motorParams.ohms') }}</span>
     </div>
     <div class="left">
-      <span>Phase Inductance =</span>
+      <span>{{ $t('wizard.motorParams.phaseInductance') }}</span>
       <span>{{" " + inductance}}</span>
-      <span class="unit">[Henries]</span>
+      <span class="unit">{{ $t('wizard.motorParams.henries') }}</span>
     </div>
-    <span class="name">Other Motor</span>
+    <span class="name">{{ $t('wizard.pages.motor.otherMotor') }}</span>
   </div>
 </template>
 

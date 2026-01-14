@@ -1,6 +1,6 @@
 <template>
   <div>
-    <button class="measure-button card" @click="clear">Clear Errors</button>
+    <button class="measure-button card" @click="clear">{{ $t('buttons.clearErrors') }}</button>
   </div>
 </template>
 

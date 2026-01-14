@@ -2,11 +2,14 @@
   <div id="app">
     <!-- HEADER -->
     <div class="header" id="header">
-      <button class="dash-button menu-button" @click="toggleMenu">Menu</button>
+      <button class="dash-button menu-button" @click="toggleMenu">{{ $t('header.menu') }}</button>
+      <button class="dash-button" @click="toggleLanguage">
+        {{ currentLocale === 'en' ? '中文' : 'English' }}
+      </button>
       <div class="card menu" id="menu" :style="{top: menuTop}" v-show="showMenu">
-        <button class="dash-button menu-item" @click="exportDash">Export dash</button>
+        <button class="dash-button menu-item" @click="exportDash">{{ $t('header.exportDash') }}</button>
         <button class="dash-button menu-item" @click="importDashWrapper">
-          Import dash
+          {{ $t('header.importDash') }}
           <input
             type="file"
             id="inputDash"
@@ -19,8 +22,8 @@
             style="display: none"
           />
         </button>
-        <button class="dash-button menu-item" id="importButton" @click="calcImportLeft();calcImportTop();toggleImport()">Import ODrive config</button>
-        <button class="dash-button menu-item" id="exportButton" @click="calcExportLeft();calcExportTop();toggleExport()">Export ODrive config</button>
+        <button class="dash-button menu-item" id="importButton" @click="calcImportLeft();calcImportTop();toggleImport()">{{ $t('header.importConfig') }}</button>
+        <button class="dash-button menu-item" id="exportButton" @click="calcExportLeft();calcExportTop();toggleExport()">{{ $t('header.exportConfig') }}</button>
       </div>
       <div class="card import-menu" :style="{top: importTop, left: importLeft}" v-show="showImport">
         <button v-for="odrive in Object.keys(odrives)" :key="odrive" class="dash-button" @click="importConfigWrapper">
@@ -171,14 +174,15 @@ export default {
     currentDash: function () {
       return this.$store.state.currentDash;
     },
+    currentLocale: function () {
+      return this.$store.state.currentLocale;
+    },
     samplingText: function () {
-      let ret;
       if (this.$store.state.sampling) {
-        ret = "stop sampling";
+        return this.$t('header.stopSampling');
       } else {
-        ret = "start sampling";
+        return this.$t('header.startSampling');
       }
-      return ret;
     },
   },
   methods: {
@@ -196,6 +200,12 @@ export default {
     toggleExport() {
       this.showExport = !this.showExport;
       this.showImport=  false;
+    },
+    toggleLanguage() {
+      const newLocale = this.$i18n.locale === 'en' ? 'zh' : 'en';
+      this.$i18n.locale = newLocale;
+      this.$store.commit('setLocale', newLocale);
+      localStorage.setItem('odrive-locale', newLocale);
     },
     importConfigWrapper() {
       const inputElem = document.getElementById("inputConfig");
@@ -409,6 +419,11 @@ export default {
     },
   },
   created() {
+    // Load saved language preference
+    const savedLocale = localStorage.getItem('odrive-locale') || 'en';
+    this.$i18n.locale = savedLocale;
+    this.$store.commit('setLocale', savedLocale);
+
     // on app creation, set the address to the default
     this.$store.dispatch("setServerAddress", "http://127.0.0.1:5000");
 

@@ -26,3 +26,5 @@ pnpm-debug.log*
 
 #Electron icon generator output
 /build
+# Claude Code temporary files
+tmpclaude-*-cwd

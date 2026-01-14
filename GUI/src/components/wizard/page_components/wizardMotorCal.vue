@@ -16,7 +16,7 @@ export default {
   },
   computed: {
     text() {
-      return this.calibrating ? "Calibrating..." : "Calibrate Motor";
+      return this.calibrating ? this.$t('wizard.calibrating') : this.$t('wizard.calibrateMotor');
     }
   },
   methods: {

@@ -11,19 +11,19 @@
       @click.self="showError = !showError"
     >
       <clear-errors :data="{ axis: axis }" />
-      axis:
+      {{ $t('axis.labels.axis') }}:
       <span :class="{ noError: !axisError, error: axisError }">{{
         axisErrorMsg
       }}</span>
-      <br />motor:
+      <br />{{ $t('axis.labels.motor') }}:
       <span :class="{ noError: !motorError, error: motorError }">{{
         motorErrorMsg
       }}</span>
-      <br />encoder:
+      <br />{{ $t('axis.labels.encoder') }}:
       <span :class="{ noError: !encoderError, error: encoderError }">{{
         encoderErrorMsg
       }}</span>
-      <br />controller:
+      <br />{{ $t('axis.labels.controller') }}:
       <span :class="{ noError: !controllerError, error: controllerError }">{{
         controllerErrorMsg
       }}</span>
@@ -53,7 +53,7 @@ export default {
   },
   methods: {
     getErrorString(errCode, errType) {
-      let retMsg = "none";
+      let retMsg = this.$t('axis.errorNone');
 
       if (errCode != 0) {
         // we got an error!
