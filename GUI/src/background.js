@@ -141,7 +141,16 @@ app.on('ready', async () => {
   }
   // launch python server on event from renderer process (gui) and pipe stdout/stderr to it
   ipcMain.on('start-server', () => {
-    server = spawn(getPyCmd(), effectiveCommand);
+    const pyCmd = getPyCmd();
+    console.log("Attempting to start python server. Command:", pyCmd, "Args:", effectiveCommand);
+    if (!pyCmd) {
+      console.error("No python command found! Please ensure python or python3 is installed and in your PATH.");
+      return;
+    }
+    server = spawn(pyCmd, effectiveCommand);
+    server.on('error', (err) => {
+      console.error('Failed to start python server process:', err);
+    });
     server.stdout.on('data', function (data) {
       try {
         console.log(data.toString('utf8'));
