@@ -13,6 +13,7 @@ import math
 import traceback
 import asyncio
 import inspect
+import threading
 
 # interface for odrive GUI to get data from odrivetool
 
@@ -66,12 +67,18 @@ def discovered_device(device):
     odrive_name = "odrive" + str(index)
 
     # add to list of odrives
-    while globals()['inUse']:
-        time.sleep(0.1)
-    globals()['odrives'][odrive_name] = device
-    globals()['odrives_status'][odrive_name] = True
-    print("Found " + str(serial_number))
-    
+    print(f"discovered_device: adding {odrive_name}, lock exists: {'odrive_lock' in globals()}")
+    if 'odrive_lock' in globals():
+        with globals()['odrive_lock']:
+            globals()['odrives'][odrive_name] = device
+            globals()['odrives_status'][odrive_name] = True
+            print("Found " + str(serial_number))
+    else:
+        print("WARNING: Lock not initialized yet!")
+        globals()['odrives'][odrive_name] = device
+        globals()['odrives_status'][odrive_name] = True
+        print("Found " + str(serial_number))
+
     # tell GUI the status of known ODrives
     socketio.emit('odrives-status', json.dumps(globals()['odrives_status']))
     # triggers a getODrives socketio message
@@ -145,19 +152,15 @@ def sampledVarNames(message):
     
 @socketio.on('startSampling')
 def sendSamples(message):
-    print("startSampling called, samplingEnabled:", session.get('samplingEnabled'))
-
     def sampling_loop():
-        print("Sampling loop started in background thread")
         while session.get('samplingEnabled', False):
             try:
                 data = getSampledData(session['sampledVars'])
                 socketio.emit('sampledData', json.dumps(data))
-                time.sleep(0.02)
+                time.sleep(0.1)  # 100ms = 10Hz, reduced from 20ms to allow setProperty to acquire lock
             except Exception as e:
                 print(f"Error in sampling loop: {e}")
                 break
-        print("Sampling loop ended")
 
     # Start sampling in a background thread
     socketio.start_background_task(sampling_loop)
@@ -169,97 +172,97 @@ def handle_message(message):
 
 @socketio.on('getODrives')
 def get_odrives(data):
-    print(">>> getODrives called, waiting for lock...")
-    # spinlock
-    while globals()['inUse']:
-        time.sleep(0.1)
-
-    print(">>> getODrives acquired lock")
-    globals()['inUse'] = True
-    odriveDict = {}
-    #for (index, odrv) in enumerate(globals()['odrives']):
-    #    odriveDict["odrive" + str(index)] = dictFromRO(odrv)
-    for key in globals()['odrives_status'].keys():
-        if globals()['odrives_status'][key] == True:
-            print(f">>> Building dict for {key}...")
-            odriveDict[key] = dictFromRO(globals()['odrives'][key])
-            print(f">>> Completed dict for {key}")
-    print(">>> getODrives releasing lock")
-    globals()['inUse'] = False
-    emit('odrives', json.dumps(odriveDict))
-    print(">>> getODrives completed")
+    print(">>> getODrives called, acquiring lock...")
+    with globals()['odrive_lock']:
+        print(">>> getODrives: lock acquired")
+        odriveDict = {}
+        #for (index, odrv) in enumerate(globals()['odrives']):
+        #    odriveDict["odrive" + str(index)] = dictFromRO(odrv)
+        for key in globals()['odrives_status'].keys():
+            if globals()['odrives_status'][key] == True:
+                print(f">>> getODrives: building dict for {key}")
+                odriveDict[key] = dictFromRO(globals()['odrives'][key])
+        print(">>> getODrives: emitting odrives")
+        emit('odrives', json.dumps(odriveDict))
+    print(">>> getODrives: lock released, done")
 
 @socketio.on('getProperty')
 def get_property(message):
     # message is dict natively
     # will be {"path": "odriveX.axisY.blah.blah"}
-    print(f"<<< getProperty called for {message['path']}")
-    while globals()['inUse']:
-        time.sleep(0.1)
-    print(f"<<< getProperty acquired lock for {message['path']}")
+
+    # Skip if write operation in progress
+    if globals().get('pause_sampling', False):
+        return
+
     if globals()['odrives_status'][message["path"].split('.')[0]]:
-        globals()['inUse'] = True
+        # Read operations don't need lock - fibre library is thread-safe for reads
         val = getVal(globals()['odrives'], message["path"].split('.'))
-        globals()['inUse'] = False
-        print(f"<<< getProperty released lock for {message['path']}")
         emit('ODriveProperty', json.dumps({"path": message["path"], "val": val}))
 
 @socketio.on('setProperty')
 def set_property(message):
-    print("!!!!! setProperty handler called !!!!! Message: " + str(message))
     # message is {"path":, "val":, "type":}
-    # TEMPORARILY DISABLE LOCK TO TEST
-    # while globals()['inUse']:
-    #     print("Waiting for lock...")
-    #     time.sleep(0.1)
-    print("Lock bypassed for testing")
-    # globals()['inUse'] = True
-    print("From setProperty event handler: " + str(message))
-    print("Calling postVal...")
-    postVal(globals()['odrives'], message["path"].split('.'), message["val"], message["type"])
-    print("postVal completed")
-    print("Getting value back...")
-    val = getVal(globals()['odrives'], message["path"].split('.'))
-    print("Got value:", val)
-    # globals()['inUse'] = False
-    emit('ODriveProperty', json.dumps({"path": message["path"], "val": val}))
-    print("Emitted response")
+    print(f"setProperty called: {message}")
+    try:
+        # Signal reads to pause briefly during write
+        globals()['pause_sampling'] = True
+
+        # Acquire lock for exclusive write access
+        with globals()['odrive_lock']:
+            print("Lock acquired, writing...")
+            postVal(globals()['odrives'], message["path"].split('.'), message["val"], message["type"])
+            val = getVal(globals()['odrives'], message["path"].split('.'))
+            emit('ODriveProperty', json.dumps({"path": message["path"], "val": val}))
+            print(f"Write completed, value={val}")
+
+        globals()['pause_sampling'] = False
+        print("setProperty completed successfully")
+    except Exception as e:
+        globals()['pause_sampling'] = False
+        print(f"setProperty error: {e}")
+        import traceback
+        traceback.print_exc()
 
 @socketio.on('callFunction')
 def call_function(message):
     # message is {"path"}, no args yet (do we know which functions accept arguments from the odrive tree directly?)
-    while globals()['inUse']:
-        time.sleep(0.1)
-    print("From callFunction event handler: " + str(message))
-    globals()['inUse'] = True
-    callFunc(globals()['odrives'], message["path"].split('.'))
-    globals()['inUse'] = False
+    with globals()['odrive_lock']:
+        callFunc(globals()['odrives'], message["path"].split('.'))
 
 @app.route('/', methods=['GET'])
 def home():
     return "<h1>ODrive GUI Server</h1>"
 
-def await_if_coroutine(value):
+def await_if_coroutine(value, timeout=2.0):
     """
     If value is a coroutine, await it and return the result.
     Otherwise, return the value directly.
     """
     if inspect.iscoroutine(value):
-        # Run the coroutine in a new event loop
+        # Ensure this thread has an event loop before awaiting.
+        loop = ensure_event_loop()
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If loop is already running, create a new one
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            return loop.run_until_complete(value)
-        except:
-            # Fallback: create new event loop
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(value)
+            result = loop.run_until_complete(asyncio.wait_for(value, timeout=timeout))
             return result
+        except asyncio.TimeoutError:
+            print(f"WARNING: Coroutine timed out after {timeout}s")
+            return None
+        except Exception as e:
+            print(f"WARNING: Coroutine failed: {e}")
+            return None
     return value
+
+_thread_local = threading.local()
+
+def ensure_event_loop():
+    """Ensure this thread has an asyncio event loop set."""
+    loop = getattr(_thread_local, 'loop', None)
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        _thread_local.loop = loop
+    asyncio.set_event_loop(loop)
+    return loop
 
 def is_odrive_object(obj):
     """Check if an object is an ODrive remote object using duck typing."""
@@ -300,8 +303,8 @@ def is_odrive_property(obj):
 
 def dictFromRO(RO):
     """Create dict from an ODrive RemoteObject that's suitable for sending as JSON."""
-    print(f"dictFromRO: Starting for object type {type(RO).__name__}")
     returnDict = {}
+    ensure_event_loop()
 
     for key in dir(RO):
         if key.startswith('_'):
@@ -394,38 +397,40 @@ def dictFromRO(RO):
             except:
                 pass
 
-    print(f"dictFromRO: Completed, returning dict with {len(returnDict)} keys")
     return returnDict
 
 def postVal(odrives, keyList, value, argType):
     # expect a list of keys in the form of ["key1", "key2", "keyN"]
     # "key1" will be "odriveN"
     # like this: postVal(odrives, ["odrive0","axis0","config","calibration_lockin","accel"], 17.0)
-    print(f"postVal called: keyList={keyList}, value={value}, argType={argType}")
+    print(f"postVal: keyList={keyList}, value={value}, argType={argType}")
     odrv = None
     try:
         odrv = keyList.pop(0)
-        print(f"ODrive: {odrv}")
         RO = odrives[odrv]
         keyList[-1] = '_' + keyList[-1] + '_property'
-        print(f"Modified keyList: {keyList}")
+        print(f"postVal: Getting property path: {keyList}")
         for key in keyList:
             RO = getattr(RO, key)
-        print(f"Got remote object, type={argType}")
+        print(f"postVal: Got property object, writing value...")
         if argType == "number":
-            print(f"Calling RO.write({float(value)})")
-            await_if_coroutine(RO.write(float(value)))
-            print("write() completed")
+            ensure_event_loop()
+            result = RO.write(float(value))
+            print(f"postVal: write() returned {type(result).__name__}")
+            await_if_coroutine(result, timeout=1.0)  # 1 second timeout for write
         elif argType == "boolean":
-            await_if_coroutine(RO.write(value))
+            ensure_event_loop()
+            await_if_coroutine(RO.write(value), timeout=1.0)
         elif argType == "string":
             if value == "Infinity":
-                await_if_coroutine(RO.write(math.inf))
+                ensure_event_loop()
+                await_if_coroutine(RO.write(math.inf), timeout=1.0)
             elif value == "-Infinity":
-                await_if_coroutine(RO.write(-math.inf))
+                ensure_event_loop()
+                await_if_coroutine(RO.write(-math.inf), timeout=1.0)
         else:
             pass # dont support that type yet
-        print("postVal completed successfully")
+        print(f"postVal: Write completed")
     except Exception as ex:
         # Check if it's a connection/object lost error
         error_str = str(ex).lower()
@@ -442,6 +447,7 @@ def getVal(odrives, keyList):
         keyList[-1] = '_' + keyList[-1] + '_property'
         for key in keyList:
             RO = getattr(RO, key)
+        ensure_event_loop()
         retVal = await_if_coroutine(RO.read())
         if retVal == math.inf:
             retVal = "Infinity"
@@ -461,6 +467,13 @@ def getSampledData(vars):
     #use getVal to populate a dict
     #return a dict {path:value}
     samples = {}
+
+    # Skip sampling if a write operation is in progress
+    if globals().get('pause_sampling', False):
+        return samples
+
+    # Read operations don't need lock - fibre library is thread-safe for reads
+    # Only write operations (setProperty) need exclusive access
     for path in vars["paths"]:
         keys = path.split('.')
         samples[path] = getVal(globals()['odrives'], keys)
@@ -476,6 +489,7 @@ def callFunc(odrives, keyList):
         for key in keyList:
             RO = getattr(RO, key)
         if hasattr(RO, '__call__'):
+            ensure_event_loop()
             await_if_coroutine(RO.__call__())
     except Exception as ex:
         # Check if it's a connection/object lost error
@@ -504,8 +518,10 @@ if __name__ == "__main__":
     # on handle_disconnect, set it to False. On connection, set it to True
     globals()['odrives_status'] = {}
     globals()['discovered_devices'] = []
-    # spinlock
-    globals()['inUse'] = False
+    # Thread lock for ODrive access
+    globals()['odrive_lock'] = threading.Lock()
+    # Flag to pause sampling when write operations are in progress
+    globals()['pause_sampling'] = False
 
     # Initialize fibre logger and event if available (API changed in newer versions)
     try:
@@ -516,4 +532,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Warning: Could not initialize fibre Logger/Event: {e}")
 
-    socketio.run(app, host='0.0.0.0', port=5000)
+    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

@@ -8,6 +8,7 @@ const isDevelopment = process.env.NODE_ENV !== 'production'
 const { spawnSync, execSync } = require('child_process');
 const spawn = require('child_process').spawn;
 const path = require('path');
+const fs = require('fs');
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -55,6 +56,25 @@ function getPyCmd() {
     }
   }
   return cmd;
+}
+
+function resolveServerScript() {
+  const appPath = app.getAppPath();
+  const candidates = [
+    path.join(appPath, 'server', 'odrive_server.py'),
+    path.join(appPath, '..', 'server', 'odrive_server.py'),
+    path.join(process.cwd(), 'server', 'odrive_server.py'),
+    path.join(__dirname, '..', 'server', 'odrive_server.py'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  console.error('odrive_server.py not found. Checked:', candidates);
+  return null;
 }
 
 function createWindow() {
@@ -125,10 +145,12 @@ app.on('ready', async () => {
   }
   createWindow()
   // Figure out correct path and arguments to launch python server
-  let scriptFilename = path.join(app.getAppPath(), '../server', 'odrive_server.py');
+  const scriptFilename = resolveServerScript();
   const args = process.argv;
   let effectiveCommand = [];
-  effectiveCommand.push(scriptFilename);
+  if (scriptFilename) {
+    effectiveCommand.push(scriptFilename);
+  }
   if (app.isPackaged === true) {
     for (const arg of args.slice(1)) {
       effectiveCommand.push(arg);
@@ -141,6 +163,10 @@ app.on('ready', async () => {
   }
   // launch python server on event from renderer process (gui) and pipe stdout/stderr to it
   ipcMain.on('start-server', () => {
+    if (!scriptFilename) {
+      console.error('Cannot start python server: odrive_server.py not found.');
+      return;
+    }
     const pyCmd = getPyCmd();
     console.log("Attempting to start python server. Command:", pyCmd, "Args:", effectiveCommand);
     if (!pyCmd) {
