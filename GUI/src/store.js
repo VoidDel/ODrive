@@ -375,12 +375,21 @@ export default new Vuex.Store({
             socketio.addEventListener({
                 type: "sampledData",
                 callback: message => {
-                    context.commit("updateSampledProperty", JSON.parse(message));
+                    const data = JSON.parse(message);
+                    // Only log first few samples to avoid console spam
+                    if (!window._samplingLogCount) window._samplingLogCount = 0;
+                    if (window._samplingLogCount < 3) {
+                        console.log("Received sampledData:", Object.keys(data).length, "properties");
+                        window._samplingLogCount++;
+                    }
+                    context.commit("updateSampledProperty", data);
                 }
             });
             socketio.addEventListener({
                 type: "samplingEnabled",
                 callback: () => {
+                    // Reset log counter for new sampling session
+                    window._samplingLogCount = 0;
                     socketio.sendEvent({
                         type: "startSampling"
                     });

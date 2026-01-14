@@ -142,28 +142,64 @@ def enableSampling(message):
 
 @socketio.on('stopSampling')
 def stopSampling(message):
+    print("sampling disabled")
     session['samplingEnabled'] = False
     emit('samplingDisabled')
 
 @socketio.on('sampledVarNames')
 def sampledVarNames(message):
     session['sampledVars'] = message
-    print(session['sampledVars'])
-    
+    print(f"sampledVars set: {session['sampledVars']}")
+
 @socketio.on('startSampling')
 def sendSamples(message):
-    def sampling_loop():
-        while session.get('samplingEnabled', False):
-            try:
-                data = getSampledData(session['sampledVars'])
-                socketio.emit('sampledData', json.dumps(data))
-                time.sleep(0.1)  # 100ms = 10Hz, reduced from 20ms to allow setProperty to acquire lock
-            except Exception as e:
-                print(f"Error in sampling loop: {e}")
-                break
+    print(f"startSampling: samplingEnabled={session.get('samplingEnabled', False)}")
+    # Reset debug counter for timing measurements
+    globals()['_sampling_debug_counter'] = 0
+    # Simple blocking loop - Flask-SocketIO threading mode handles this properly
+    iteration = 0
+    last_log_time = time.time()
+    loop_start_time = time.time()
+    while session.get('samplingEnabled', False):
+        try:
+            iter_start = time.time()
+            iteration += 1
 
-    # Start sampling in a background thread
-    socketio.start_background_task(sampling_loop)
+            # Detailed logging for first iteration only
+            if iteration == 1:
+                print(f"First iteration timing:")
+
+            data = getSampledData(session.get('sampledVars', {'paths': []}))
+
+            if iteration == 1:
+                emit_start = time.time()
+
+            emit('sampledData', json.dumps(data))
+
+            if iteration == 1:
+                emit_time = (time.time() - emit_start) * 1000
+                iter_time = (time.time() - iter_start) * 1000
+                print(f"  Iteration time: {iter_time:.0f}ms")
+                print(f"  Sampling rate: ~{1000/iter_time:.1f}Hz")
+
+            # Log statistics every 10 seconds
+            current_time = time.time()
+            if current_time - last_log_time >= 10.0:
+                elapsed = current_time - loop_start_time
+                actual_hz = iteration / elapsed if elapsed > 0 else 0
+                print(f"Sampling: {iteration} samples in {elapsed:.0f}s = {actual_hz:.1f}Hz")
+                last_log_time = current_time
+
+            # No sleep - run at maximum possible speed
+            # (limited by ODrive USB communication speed)
+
+        except Exception as e:
+            print(f"Error in sampling loop at iteration {iteration}: {e}")
+            import traceback
+            traceback.print_exc()
+            break
+
+    print(f"startSampling loop ended after {iteration} iterations")
 
 @socketio.on('message')
 def handle_message(message):
@@ -212,12 +248,18 @@ def set_property(message):
         with globals()['odrive_lock']:
             print("Lock acquired, writing...")
             postVal(globals()['odrives'], message["path"].split('.'), message["val"], message["type"])
-            val = getVal(globals()['odrives'], message["path"].split('.'))
-            emit('ODriveProperty', json.dumps({"path": message["path"], "val": val}))
-            print(f"Write completed, value={val}")
+            print(f"Write completed")
 
+        # Release pause flag immediately after write, don't wait for read
         globals()['pause_sampling'] = False
-        print("setProperty completed successfully")
+        print("setProperty completed, pause_sampling released")
+
+        # Read back value without holding the pause flag
+        # This may be slow but won't block sampling
+        val = getVal(globals()['odrives'], message["path"].split('.'))
+        emit('ODriveProperty', json.dumps({"path": message["path"], "val": val}))
+        print(f"Read back value: {val}")
+
     except Exception as e:
         globals()['pause_sampling'] = False
         print(f"setProperty error: {e}")
@@ -442,30 +484,36 @@ def postVal(odrives, keyList, value, argType):
 def getVal(odrives, keyList):
     odrv = None
     try:
+        original_path = '.'.join(keyList)  # Save before modifying keyList
         odrv = keyList.pop(0)
         RO = odrives[odrv]
         keyList[-1] = '_' + keyList[-1] + '_property'
         for key in keyList:
             RO = getattr(RO, key)
         ensure_event_loop()
-        retVal = await_if_coroutine(RO.read())
+        # Use very short timeout for sampling (0.1s)
+        retVal = await_if_coroutine(RO.read(), timeout=0.1)
         if retVal == math.inf:
             retVal = "Infinity"
         elif retVal == -math.inf:
             retVal = "-Infinity"
         return retVal
+    except asyncio.TimeoutError:
+        print(f"Timeout reading {original_path}")
+        return 0
     except Exception as ex:
         # Check if it's a connection/object lost error
         error_str = str(ex).lower()
         if 'lost' in error_str or 'disconnect' in error_str or 'connection' in error_str:
             if odrv:
                 handle_disconnect(odrv)
-        print("exception in getVal: ", traceback.format_exc())
+        print(f"exception in getVal({original_path}): {ex}")
         return 0
 
 def getSampledData(vars):
     #use getVal to populate a dict
     #return a dict {path:value}
+    start_time = time.time()
     samples = {}
 
     # Skip sampling if a write operation is in progress
@@ -474,9 +522,32 @@ def getSampledData(vars):
 
     # Read operations don't need lock - fibre library is thread-safe for reads
     # Only write operations (setProperty) need exclusive access
-    for path in vars["paths"]:
-        keys = path.split('.')
-        samples[path] = getVal(globals()['odrives'], keys)
+    paths = vars.get("paths", [])
+
+    # Remove duplicates to avoid redundant reads
+    unique_paths = list(dict.fromkeys(paths))
+
+    # Log timing for first sample only
+    debug_first = globals().get('_sampling_debug_counter', 0) == 0
+
+    for i, path in enumerate(unique_paths):
+        try:
+            path_start = time.time()
+            keys = path.split('.')
+            val = getVal(globals()['odrives'], keys)
+            samples[path] = val
+            path_time = (time.time() - path_start) * 1000
+
+            if debug_first:
+                print(f"    {path}: {path_time:.0f}ms")
+        except Exception as e:
+            print(f"Error reading {path}: {e}")
+            samples[path] = 0  # Return 0 on error to keep sampling going
+
+    total_time = (time.time() - start_time) * 1000
+    if debug_first:
+        print(f"  Total read time: {total_time:.0f}ms for {len(unique_paths)} properties")
+        globals()['_sampling_debug_counter'] = 1
 
     return samples
 
