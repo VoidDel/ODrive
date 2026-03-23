@@ -1599,6 +1599,11 @@ valuetypes:
       SPI_ABS_MA732:
         value: 0x104
         doc: MagAlpha MA732 magnetic encoder
+      UART_ABS_TAMAGAWA:
+        value: 0x105
+        doc: |
+          Tamagawa serial absolute encoder over UART/RS485.
+          The current implementation supports the full-data position read command only.
 
   ODrive.Controller.ControlMode:
     values:

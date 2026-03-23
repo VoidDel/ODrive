@@ -916,9 +916,26 @@ bool Encoder::tamagawa_init() {
     if (config_.tamagawa_uart == nullptr) {
         return false;
     }
+
+    // The decoder below currently only supports the 0x03 full-data response layout.
+    if (config_.tamagawa_data_id != 0x03) {
+        return false;
+    }
     
     // DE/RE control is handled by hardware auto-direction circuit
     // No GPIO initialization needed
+
+    // Tamagawa uses fixed-size request/response frames, so the RX DMA should
+    // complete once per response instead of wrapping forever like the UART
+    // server's circular receive path.
+    if (config_.tamagawa_uart->hdmarx != nullptr
+            && config_.tamagawa_uart->hdmarx->Init.Mode != DMA_NORMAL) {
+        config_.tamagawa_uart->hdmarx->Init.Mode = DMA_NORMAL;
+        if (HAL_DMA_Init(config_.tamagawa_uart->hdmarx) != HAL_OK) {
+            return false;
+        }
+        __HAL_LINKDMA(config_.tamagawa_uart, hdmarx, *config_.tamagawa_uart->hdmarx);
+    }
     
     // Clear buffers
     memset(tamagawa_rx_buffer_, 0, sizeof(tamagawa_rx_buffer_));
@@ -982,6 +999,11 @@ bool Encoder::tamagawa_send_command_dma(uint8_t cmd) {
     if (config_.tamagawa_uart == nullptr) {
         return false;
     }
+
+    if (cmd != 0x03) {
+        tamagawa_error_count_++;
+        return false;
+    }
     
     // Check if previous DMA transfer is still active
     if (tamagawa_dma_active_) {
@@ -994,6 +1016,7 @@ bool Encoder::tamagawa_send_command_dma(uint8_t cmd) {
     tamagawa_tx_buffer_[1] = tamagawa_calc_crc(&cmd, 1);
     
     // Reset flags
+    memset(tamagawa_rx_buffer_, 0, sizeof(tamagawa_rx_buffer_));
     tamagawa_rx_complete_ = false;
     tamagawa_tx_complete_ = false;
     tamagawa_dma_active_ = true;

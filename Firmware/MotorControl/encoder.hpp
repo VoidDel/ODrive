@@ -51,7 +51,7 @@ public:
         // Tamagawa encoder configuration
         UART_HandleTypeDef* tamagawa_uart = nullptr; // UART handle for Tamagawa communication
         Stm32Gpio tamagawa_de_re_gpio; // GPIO for RS485 DE/RE direction control
-        uint8_t tamagawa_data_id = 0x03; // Data ID for reading (default: 0x03 for full data)
+        uint8_t tamagawa_data_id = 0x03; // Currently only 0x03 (full data) is supported
 
 
         // custom setters
