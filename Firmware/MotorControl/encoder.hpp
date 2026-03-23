@@ -15,8 +15,19 @@ class Encoder : public ODriveIntf::EncoderIntf {
 public:
     static constexpr uint32_t MODE_FLAG_ABS = 0x100;
     static constexpr uint32_t MODE_UART_ABS_TAMAGAWA = 0x105;
-    static constexpr size_t TAMAGAWA_CMD_FRAME_SIZE = 2;
+    static constexpr uint8_t TAMAGAWA_DATA_ID_ABS = 0x0;
+    static constexpr uint8_t TAMAGAWA_DATA_ID_MULTI_TURN = 0x1;
+    static constexpr uint8_t TAMAGAWA_DATA_ID_ENCODER_ID = 0x2;
+    static constexpr uint8_t TAMAGAWA_DATA_ID_FULL = 0x3;
+    static constexpr uint8_t TAMAGAWA_DATA_ID_RESET_ERRORS = 0x7;
+    static constexpr uint8_t TAMAGAWA_DATA_ID_RESET_SINGLE_TURN = 0x8;
+    static constexpr uint8_t TAMAGAWA_DATA_ID_RESET_MULTI_TURN_ERRORS = 0xC;
+    static constexpr uint8_t TAMAGAWA_SINK_CODE = 0x2; // b010, transmitted LSB-first by UART
+    static constexpr uint8_t TAMAGAWA_TS5700N8501_ENID = 0x17;
+    static constexpr size_t TAMAGAWA_MAX_TX_FRAME_SIZE = 4;
     static constexpr size_t TAMAGAWA_RESP_FRAME_SIZE = 11;
+    static constexpr uint8_t TAMAGAWA_RESET_REPEAT_COUNT = 10;
+    static constexpr uint32_t TAMAGAWA_RESET_MIN_SPACING_US = 40;
     static constexpr std::array<float, 6> hall_edge_defaults = 
         {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
 
@@ -51,7 +62,7 @@ public:
         // Tamagawa encoder configuration
         UART_HandleTypeDef* tamagawa_uart = nullptr; // UART handle for Tamagawa communication
         Stm32Gpio tamagawa_de_re_gpio; // GPIO for RS485 DE/RE direction control
-        uint8_t tamagawa_data_id = 0x03; // Currently only 0x03 (full data) is supported
+        uint8_t tamagawa_data_id = TAMAGAWA_DATA_ID_FULL; // Polling supports ABS-only (0x0) or full-data (0x3)
 
 
         // custom setters
@@ -86,6 +97,9 @@ public:
     bool run_hall_polarity_calibration();
     bool run_hall_phase_calibration();
     bool run_offset_calibration();
+    bool tamagawa_clear_encoder_errors();
+    bool tamagawa_reset_single_turn();
+    bool tamagawa_reset_multi_turn_and_errors();
     void sample_now();
     bool read_sampled_gpio(Stm32Gpio gpio);
     void decode_hall_samples();
@@ -156,23 +170,33 @@ public:
     
     // Tamagawa encoder functions
     bool tamagawa_init();
-    bool tamagawa_send_command(uint8_t cmd);
-    bool tamagawa_send_command_dma(uint8_t cmd);
+    bool tamagawa_send_command(uint8_t data_id);
+    bool tamagawa_send_command_dma(uint8_t data_id);
     bool tamagawa_decode_position(uint8_t* data);
+    bool tamagawa_execute_reset_sequence(uint8_t data_id);
+    bool tamagawa_send_blocking_transaction(uint8_t data_id, uint8_t* response);
+    bool tamagawa_validate_response(uint8_t* data, uint8_t data_id, bool allow_encoder_error_bits);
+    bool tamagawa_can_run_reset_command();
     uint8_t tamagawa_calc_crc(uint8_t* data, size_t len);
+    uint8_t tamagawa_build_cf(uint8_t data_id);
+    bool tamagawa_data_id_supported_for_polling(uint8_t data_id);
     bool tamagawa_check_error(uint8_t sts);
     bool tamagawa_check_timeout();
     
     // Tamagawa encoder state
     uint8_t tamagawa_rx_buffer_[12]; // Buffer for receiving data (CF+SF+DF0-DF7+CRC = 11 bytes, plus margin)
-    uint8_t tamagawa_tx_buffer_[TAMAGAWA_CMD_FRAME_SIZE];  // Buffer for transmitting command (CF+CRC)
+    uint8_t tamagawa_tx_buffer_[TAMAGAWA_MAX_TX_FRAME_SIZE];
     volatile bool tamagawa_rx_complete_ = false;
     volatile bool tamagawa_tx_complete_ = false;
     volatile bool tamagawa_dma_active_ = false; // DMA transfer in progress
+    volatile bool tamagawa_manual_transaction_active_ = false;
     uint32_t tamagawa_last_communication_ = 0;
     uint32_t tamagawa_timeout_ms_ = 2; // Timeout in ms (default 2ms, should be much faster)
+    uint8_t tamagawa_last_data_id_ = TAMAGAWA_DATA_ID_FULL;
     uint8_t tamagawa_status_ = 0; // Status field from encoder
     uint8_t tamagawa_almc_ = 0;   // ALMC (alarm code) from encoder
+    uint8_t tamagawa_enid_ = 0;
+    uint32_t tamagawa_multi_turn_ = 0;
     uint32_t tamagawa_error_count_ = 0; // Error counter for debugging
 
     constexpr float getCoggingRatio(){

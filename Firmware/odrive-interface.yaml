@@ -1364,6 +1364,21 @@ interfaces:
             type: int32
             unit: counts
         doc: Set the current linear position of the axis, in counts
+      tamagawa_clear_encoder_errors:
+        out: {success: bool}
+        doc: |
+          Sends Tamagawa Data ID 7 ten times to clear encoder error flags.
+          Only valid for `MODE_UART_ABS_TAMAGAWA` while the motor is disarmed.
+      tamagawa_reset_single_turn:
+        out: {success: bool}
+        doc: |
+          Sends Tamagawa Data ID 8 ten times to reset the single-turn counter.
+          Only valid for `MODE_UART_ABS_TAMAGAWA` while the motor is disarmed.
+      tamagawa_reset_multi_turn_and_errors:
+        out: {success: bool}
+        doc: |
+          Sends Tamagawa Data ID C ten times to reset the multi-turn counter and clear errors.
+          Only valid for `MODE_UART_ABS_TAMAGAWA` while the motor is disarmed.
 
 
   ODrive.SensorlessEstimator:

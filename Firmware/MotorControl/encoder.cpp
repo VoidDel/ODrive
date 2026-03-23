@@ -474,6 +474,18 @@ bool Encoder::run_offset_calibration() {
     return true;
 }
 
+bool Encoder::tamagawa_clear_encoder_errors() {
+    return tamagawa_execute_reset_sequence(TAMAGAWA_DATA_ID_RESET_ERRORS);
+}
+
+bool Encoder::tamagawa_reset_single_turn() {
+    return tamagawa_execute_reset_sequence(TAMAGAWA_DATA_ID_RESET_SINGLE_TURN);
+}
+
+bool Encoder::tamagawa_reset_multi_turn_and_errors() {
+    return tamagawa_execute_reset_sequence(TAMAGAWA_DATA_ID_RESET_MULTI_TURN_ERRORS);
+}
+
 static bool decode_hall(uint8_t hall_state, int32_t* hall_cnt) {
     switch (hall_state) {
         case 0b001: *hall_cnt = 0; return true;
@@ -513,6 +525,9 @@ void Encoder::sample_now() {
         
         case MODE_UART_ABS_TAMAGAWA:
         {
+            if (tamagawa_manual_transaction_active_) {
+                break;
+            }
             // Use DMA for non-blocking communication
             // This allows both axes to communicate in parallel
             tamagawa_send_command_dma(config_.tamagawa_data_id);
@@ -774,6 +789,10 @@ bool Encoder::update() {
         }break;
         
         case MODE_UART_ABS_TAMAGAWA: {
+            if (tamagawa_manual_transaction_active_) {
+                delta_enc = 0;
+                break;
+            }
             // Check for timeout first
             if (tamagawa_check_timeout()) {
                 spi_error_rate_ += current_meas_period * (1.0f - spi_error_rate_);
@@ -917,8 +936,7 @@ bool Encoder::tamagawa_init() {
         return false;
     }
 
-    // The decoder below currently only supports the 0x03 full-data response layout.
-    if (config_.tamagawa_data_id != 0x03) {
+    if (!tamagawa_data_id_supported_for_polling(config_.tamagawa_data_id)) {
         return false;
     }
     
@@ -946,6 +964,11 @@ bool Encoder::tamagawa_init() {
     tamagawa_dma_active_ = false;
     tamagawa_last_communication_ = 0;
     tamagawa_error_count_ = 0;
+    tamagawa_last_data_id_ = config_.tamagawa_data_id;
+    tamagawa_status_ = 0;
+    tamagawa_almc_ = 0;
+    tamagawa_enid_ = 0;
+    tamagawa_multi_turn_ = 0;
     
     return true;
 }
@@ -965,18 +988,32 @@ uint8_t Encoder::tamagawa_calc_crc(uint8_t* data, size_t len) {
     return crc;
 }
 
+uint8_t Encoder::tamagawa_build_cf(uint8_t data_id) {
+    const uint8_t id_parity =
+            ((data_id >> 0) ^ (data_id >> 1) ^ (data_id >> 2) ^ (data_id >> 3)) & 0x1;
+    return TAMAGAWA_SINK_CODE | ((data_id & 0x0F) << 3) | (id_parity << 7);
+}
+
+bool Encoder::tamagawa_data_id_supported_for_polling(uint8_t data_id) {
+    return data_id == TAMAGAWA_DATA_ID_ABS || data_id == TAMAGAWA_DATA_ID_FULL;
+}
+
 // Blocking send command (fallback, not recommended for 8kHz)
-bool Encoder::tamagawa_send_command(uint8_t cmd) {
+bool Encoder::tamagawa_send_command(uint8_t data_id) {
     if (config_.tamagawa_uart == nullptr) {
         return false;
     }
+
+    if (!tamagawa_data_id_supported_for_polling(data_id)) {
+        tamagawa_error_count_++;
+        return false;
+    }
     
-    // Prepare command frame: [CF] [CRC]
-    tamagawa_tx_buffer_[0] = cmd;
-    tamagawa_tx_buffer_[1] = tamagawa_calc_crc(&cmd, 1);
+    // Regular position polling requests consist of a single Control Field.
+    tamagawa_tx_buffer_[0] = tamagawa_build_cf(data_id);
     
     // Transmit command (blocking)
-    HAL_StatusTypeDef status = HAL_UART_Transmit(config_.tamagawa_uart, tamagawa_tx_buffer_, TAMAGAWA_CMD_FRAME_SIZE, 10);
+    HAL_StatusTypeDef status = HAL_UART_Transmit(config_.tamagawa_uart, tamagawa_tx_buffer_, 1, 10);
     
     if (status != HAL_OK) {
         return false;
@@ -990,17 +1027,18 @@ bool Encoder::tamagawa_send_command(uint8_t cmd) {
         return false;
     }
     
+    tamagawa_last_data_id_ = data_id;
     tamagawa_last_communication_ = HAL_GetTick();
     return true;
 }
 
 // Non-blocking DMA send command (recommended for 8kHz)
-bool Encoder::tamagawa_send_command_dma(uint8_t cmd) {
+bool Encoder::tamagawa_send_command_dma(uint8_t data_id) {
     if (config_.tamagawa_uart == nullptr) {
         return false;
     }
 
-    if (cmd != 0x03) {
+    if (!tamagawa_data_id_supported_for_polling(data_id)) {
         tamagawa_error_count_++;
         return false;
     }
@@ -1011,9 +1049,8 @@ bool Encoder::tamagawa_send_command_dma(uint8_t cmd) {
         return false;
     }
     
-    // Prepare command frame: [CF] [CRC]
-    tamagawa_tx_buffer_[0] = cmd;
-    tamagawa_tx_buffer_[1] = tamagawa_calc_crc(&cmd, 1);
+    // Regular position polling requests consist of a single Control Field.
+    tamagawa_tx_buffer_[0] = tamagawa_build_cf(data_id);
     
     // Reset flags
     memset(tamagawa_rx_buffer_, 0, sizeof(tamagawa_rx_buffer_));
@@ -1038,7 +1075,7 @@ bool Encoder::tamagawa_send_command_dma(uint8_t cmd) {
     status = HAL_UART_Transmit_DMA(
         config_.tamagawa_uart,
         tamagawa_tx_buffer_,
-        TAMAGAWA_CMD_FRAME_SIZE
+        1
     );
     
     if (status != HAL_OK) {
@@ -1049,8 +1086,126 @@ bool Encoder::tamagawa_send_command_dma(uint8_t cmd) {
         return false;
     }
     
+    tamagawa_last_data_id_ = data_id;
     tamagawa_last_communication_ = HAL_GetTick();
     return true;
+}
+
+bool Encoder::tamagawa_can_run_reset_command() {
+    if (mode_ != MODE_UART_ABS_TAMAGAWA || config_.tamagawa_uart == nullptr || axis_ == nullptr) {
+        return false;
+    }
+
+    // Keep reset commands out of the active control loop path. This is stricter
+    // than the protocol requirement but avoids colliding with the 8kHz poller.
+    if (axis_->motor_.is_armed_) {
+        return false;
+    }
+
+    return true;
+}
+
+bool Encoder::tamagawa_validate_response(uint8_t* data, uint8_t data_id, bool allow_encoder_error_bits) {
+    if (data == nullptr) {
+        return false;
+    }
+
+    if (data[0] != tamagawa_build_cf(data_id)) {
+        return false;
+    }
+
+    const uint8_t received_crc = data[TAMAGAWA_RESP_FRAME_SIZE - 1];
+    const uint8_t calculated_crc = tamagawa_calc_crc(data, TAMAGAWA_RESP_FRAME_SIZE - 1);
+    if (received_crc != calculated_crc) {
+        return false;
+    }
+
+    const uint8_t status = data[1];
+    if (status & 0x0C) { // ca0 / ca1
+        return false;
+    }
+
+    if (!allow_encoder_error_bits && (status & 0x03)) { // ea0 / ea1
+        return false;
+    }
+
+    return true;
+}
+
+bool Encoder::tamagawa_send_blocking_transaction(uint8_t data_id, uint8_t* response) {
+    if (config_.tamagawa_uart == nullptr || response == nullptr) {
+        return false;
+    }
+
+    memset(response, 0, TAMAGAWA_RESP_FRAME_SIZE);
+    tamagawa_tx_buffer_[0] = tamagawa_build_cf(data_id);
+
+    if (HAL_UART_Transmit(config_.tamagawa_uart, tamagawa_tx_buffer_, 1, 10) != HAL_OK) {
+        return false;
+    }
+
+    if (HAL_UART_Receive(config_.tamagawa_uart, response, TAMAGAWA_RESP_FRAME_SIZE, tamagawa_timeout_ms_) != HAL_OK) {
+        return false;
+    }
+
+    tamagawa_last_data_id_ = data_id;
+    tamagawa_last_communication_ = HAL_GetTick();
+    return true;
+}
+
+bool Encoder::tamagawa_execute_reset_sequence(uint8_t data_id) {
+    if (data_id != TAMAGAWA_DATA_ID_RESET_ERRORS
+            && data_id != TAMAGAWA_DATA_ID_RESET_SINGLE_TURN
+            && data_id != TAMAGAWA_DATA_ID_RESET_MULTI_TURN_ERRORS) {
+        return false;
+    }
+
+    if (!tamagawa_can_run_reset_command()) {
+        return false;
+    }
+
+    uint32_t prim = cpu_enter_critical();
+    tamagawa_manual_transaction_active_ = true;
+    cpu_exit_critical(prim);
+
+    HAL_UART_AbortTransmit(config_.tamagawa_uart);
+    HAL_UART_AbortReceive(config_.tamagawa_uart);
+    tamagawa_dma_active_ = false;
+    tamagawa_rx_complete_ = false;
+    tamagawa_tx_complete_ = false;
+
+    uint8_t response[TAMAGAWA_RESP_FRAME_SIZE];
+    bool success = true;
+
+    for (uint8_t i = 0; i < TAMAGAWA_RESET_REPEAT_COUNT; ++i) {
+        if (!tamagawa_send_blocking_transaction(data_id, response)
+                || !tamagawa_validate_response(response, data_id, true)) {
+            success = false;
+            break;
+        }
+
+        if (i + 1 < TAMAGAWA_RESET_REPEAT_COUNT) {
+            delay_us(TAMAGAWA_RESET_MIN_SPACING_US);
+        }
+    }
+
+    if (success) {
+        uint8_t full_data_response[TAMAGAWA_RESP_FRAME_SIZE];
+        if (!tamagawa_send_blocking_transaction(TAMAGAWA_DATA_ID_FULL, full_data_response)
+                || !tamagawa_decode_position(full_data_response)) {
+            success = false;
+        }
+    }
+
+    prim = cpu_enter_critical();
+    tamagawa_manual_transaction_active_ = false;
+    cpu_exit_critical(prim);
+
+    if (!success) {
+        tamagawa_error_count_++;
+    }
+
+    return success;
 }
 
 bool Encoder::tamagawa_check_timeout() {
@@ -1074,10 +1229,12 @@ bool Encoder::tamagawa_check_timeout() {
 }
 
 bool Encoder::tamagawa_decode_position(uint8_t* data) {
-    // Data format: [CF] [SF] [DF0] [DF1] [DF2] [DF3] [DF4] [DF5] [DF6] [DF7] [CRC]
-    // For Data ID 0x03 (full data): DF0-DF2 = ABS0-ABS2 (single-turn), DF3 = ENID, DF4-DF6 = ABM0-ABM2 (multi-turn), DF7 = ALMC
-    
     if (data == nullptr) {
+        return false;
+    }
+
+    const uint8_t expected_cf = tamagawa_build_cf(tamagawa_last_data_id_);
+    if (data[0] != expected_cf) {
         return false;
     }
     
@@ -1092,38 +1249,56 @@ bool Encoder::tamagawa_decode_position(uint8_t* data) {
     // Store status field
     tamagawa_status_ = data[1]; // SF
     
-    // Check for communication errors in status field
+    // Communication alarms indicate that the encoder fell back to an error reply;
+    // the host must discard this frame and retry.
     if (tamagawa_check_error(tamagawa_status_)) {
         return false;
     }
-    
-    // Extract single-turn position (17 bits)
-    // ABS0 (DF0) = bits 0-7
-    // ABS1 (DF1) = bits 8-15
-    // ABS2 (DF2) = bits 16-23, but only lower 2 bits are valid (bits 16-17)
-    uint32_t single_turn = (uint32_t)data[2] | ((uint32_t)data[3] << 8) | (((uint32_t)data[4] & 0x03) << 16);
-    
-    // Extract multi-turn count (16 bits)
-    // ABM0 (DF4) = bits 0-7
-    // ABM1 (DF5) = bits 8-15
-    // ABM2 (DF6) = bits 16-23, but only lower 8 bits are valid (bits 16-23)
-    uint32_t multi_turn = (uint32_t)data[6] | ((uint32_t)data[7] << 8) | ((uint32_t)data[8] << 16);
-    (void)multi_turn;
-    
-    // Store ALMC (alarm code)
-    tamagawa_almc_ = data[9]; // DF7 = ALMC
-    
-    // Combine single-turn and multi-turn into absolute position
-    // For Tamagawa TS5700N8501: 17-bit single-turn + 16-bit multi-turn = 33-bit absolute position
-    // However, ODrive typically uses 32-bit or less for position
-    // We'll use the combined value and let the user configure CPR appropriately
-    
-    // Calculate absolute position: multi_turn * (2^17) + single_turn
-    // This gives a 33-bit value, but we'll store it in a 32-bit variable
-    // The user should set CPR to 2^17 (131072) for single-turn operation
-    // or handle multi-turn separately if needed
-    
-    // Store single-turn position (17 bits) in pos_abs_
+
+    const uint32_t single_turn =
+            (uint32_t)data[2]
+            | ((uint32_t)data[3] << 8)
+            | (((uint32_t)data[4] & 0x01) << 16);
+
+    if (data[4] & 0xFE) {
+        return false;
+    }
+
+    uint8_t enid = 0;
+    uint32_t multi_turn = 0;
+    uint8_t almc = 0;
+
+    switch (tamagawa_last_data_id_) {
+        case TAMAGAWA_DATA_ID_ABS:
+            break;
+
+        case TAMAGAWA_DATA_ID_FULL:
+            enid = data[5];
+            multi_turn =
+                    (uint32_t)data[6]
+                    | ((uint32_t)data[7] << 8)
+                    | (((uint32_t)data[8] & 0x01) << 16);
+            almc = data[9];
+
+            if (data[8] & 0xFE) {
+                return false;
+            }
+
+            if (enid != TAMAGAWA_TS5700N8501_ENID) {
+                return false;
+            }
+            break;
+
+        default:
+            return false;
+    }
+
+    tamagawa_enid_ = enid;
+    tamagawa_multi_turn_ = multi_turn;
+    tamagawa_almc_ = almc;
+
+    // ODrive control currently consumes the single-turn absolute position; the
+    // multi-turn counter and alarm byte are retained for diagnostics.
     pos_abs_ = (int32_t)single_turn;
     
     // For multi-turn support, we could update shadow_count_ as:
@@ -1153,8 +1328,6 @@ bool Encoder::tamagawa_check_error(uint8_t sts) {
         return true;
     }
     
-    // ca0 and ca1 are communication alarms, might not be critical for position reading
-    // but we'll consider them as errors for now
     if (sts & 0x0C) { // ca0 or ca1
         return true;
     }
