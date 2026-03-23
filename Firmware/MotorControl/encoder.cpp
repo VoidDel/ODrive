@@ -486,6 +486,89 @@ bool Encoder::tamagawa_reset_multi_turn_and_errors() {
     return tamagawa_execute_reset_sequence(TAMAGAWA_DATA_ID_RESET_MULTI_TURN_ERRORS);
 }
 
+std::tuple<bool, uint8_t, bool> Encoder::tamagawa_read_eeprom(uint8_t page, uint8_t address) {
+    if (!tamagawa_can_run_manual_command()) {
+        return std::make_tuple(false, uint8_t{0}, false);
+    }
+
+    uint32_t prim = cpu_enter_critical();
+    tamagawa_manual_transaction_active_ = true;
+    cpu_exit_critical(prim);
+
+    HAL_UART_AbortTransmit(config_.tamagawa_uart);
+    HAL_UART_AbortReceive(config_.tamagawa_uart);
+    tamagawa_dma_active_ = false;
+    tamagawa_rx_complete_ = false;
+    tamagawa_tx_complete_ = false;
+
+    bool success = false;
+    uint8_t value = 0;
+    bool busy = false;
+    uint8_t response[4];
+
+    if (tamagawa_select_eeprom_page(page)
+            && tamagawa_send_eeprom_read_transaction(address, response)
+            && tamagawa_parse_eeprom_response(TAMAGAWA_DATA_ID_EEPROM_READ, address, response, &value, &busy)) {
+        success = true;
+    }
+
+    prim = cpu_enter_critical();
+    tamagawa_manual_transaction_active_ = false;
+    cpu_exit_critical(prim);
+
+    if (!success) {
+        tamagawa_error_count_++;
+    }
+
+    return std::make_tuple(success, value, busy);
+}
+
+std::tuple<bool, bool> Encoder::tamagawa_write_eeprom(uint8_t page, uint8_t address, uint8_t value) {
+    if (!tamagawa_can_run_manual_command()) {
+        return std::make_tuple(false, false);
+    }
+
+    uint32_t prim = cpu_enter_critical();
+    tamagawa_manual_transaction_active_ = true;
+    cpu_exit_critical(prim);
+
+    HAL_UART_AbortTransmit(config_.tamagawa_uart);
+    HAL_UART_AbortReceive(config_.tamagawa_uart);
+    tamagawa_dma_active_ = false;
+    tamagawa_rx_complete_ = false;
+    tamagawa_tx_complete_ = false;
+
+    bool success = false;
+    bool busy = false;
+    uint8_t response[4];
+
+    if (tamagawa_select_eeprom_page(page)
+            && tamagawa_send_eeprom_write_transaction(address, value, response)
+            && tamagawa_parse_eeprom_response(TAMAGAWA_DATA_ID_EEPROM_WRITE, address, response, nullptr, &busy)
+            && tamagawa_wait_for_eeprom_write_cycle()) {
+        success = true;
+    }
+
+    prim = cpu_enter_critical();
+    tamagawa_manual_transaction_active_ = false;
+    cpu_exit_critical(prim);
+
+    if (!success) {
+        tamagawa_error_count_++;
+    }
+
+    return std::make_tuple(success, busy);
+}
+
+std::tuple<bool, float> Encoder::tamagawa_read_temperature() {
+    auto result = tamagawa_read_eeprom(TAMAGAWA_TEMPERATURE_PAGE, TAMAGAWA_TEMPERATURE_ADDRESS);
+    if (!std::get<0>(result)) {
+        return std::make_tuple(false, 0.0f);
+    }
+
+    return std::make_tuple(true, static_cast<float>(std::get<1>(result)));
+}
+
 static bool decode_hall(uint8_t hall_state, int32_t* hall_cnt) {
     switch (hall_state) {
         case 0b001: *hall_cnt = 0; return true;
@@ -968,6 +1051,7 @@ bool Encoder::tamagawa_init() {
     tamagawa_status_ = 0;
     tamagawa_almc_ = 0;
     tamagawa_enid_ = 0;
+    tamagawa_eeprom_page_ = 0;
     tamagawa_multi_turn_ = 0;
     
     return true;
@@ -1091,7 +1175,7 @@ bool Encoder::tamagawa_send_command_dma(uint8_t data_id) {
     return true;
 }
 
-bool Encoder::tamagawa_can_run_reset_command() {
+bool Encoder::tamagawa_can_run_manual_command() {
     if (mode_ != MODE_UART_ABS_TAMAGAWA || config_.tamagawa_uart == nullptr || axis_ == nullptr) {
         return false;
     }
@@ -1102,6 +1186,108 @@ bool Encoder::tamagawa_can_run_reset_command() {
         return false;
     }
 
+    return true;
+}
+
+bool Encoder::tamagawa_send_eeprom_read_transaction(uint8_t address, uint8_t* response) {
+    if (config_.tamagawa_uart == nullptr || response == nullptr) {
+        return false;
+    }
+
+    uint8_t request[3];
+    request[0] = tamagawa_build_cf(TAMAGAWA_DATA_ID_EEPROM_READ);
+    request[1] = address;
+    request[2] = tamagawa_calc_crc(request, 2);
+    memset(response, 0, 4);
+
+    if (HAL_UART_Transmit(config_.tamagawa_uart, request, sizeof(request), 10) != HAL_OK) {
+        return false;
+    }
+
+    if (HAL_UART_Receive(config_.tamagawa_uart, response, 4, tamagawa_timeout_ms_) != HAL_OK) {
+        return false;
+    }
+
+    tamagawa_last_communication_ = HAL_GetTick();
+    return true;
+}
+
+bool Encoder::tamagawa_send_eeprom_write_transaction(uint8_t address, uint8_t value, uint8_t* response) {
+    if (config_.tamagawa_uart == nullptr || response == nullptr) {
+        return false;
+    }
+
+    uint8_t request[4];
+    request[0] = tamagawa_build_cf(TAMAGAWA_DATA_ID_EEPROM_WRITE);
+    request[1] = address;
+    request[2] = value;
+    request[3] = tamagawa_calc_crc(request, 3);
+    memset(response, 0, 4);
+
+    if (HAL_UART_Transmit(config_.tamagawa_uart, request, sizeof(request), 10) != HAL_OK) {
+        return false;
+    }
+
+    if (HAL_UART_Receive(config_.tamagawa_uart, response, 4, tamagawa_timeout_ms_) != HAL_OK) {
+        return false;
+    }
+
+    tamagawa_last_communication_ = HAL_GetTick();
+    return true;
+}
+
+bool Encoder::tamagawa_parse_eeprom_response(uint8_t expected_data_id, uint8_t expected_address, uint8_t* response, uint8_t* value, bool* busy) {
+    if (response == nullptr) {
+        return false;
+    }
+
+    if (response[0] != tamagawa_build_cf(expected_data_id)) {
+        return false;
+    }
+
+    if (tamagawa_calc_crc(response, 3) != response[3]) {
+        return false;
+    }
+
+    const uint8_t response_address = response[1] & 0x7F;
+    const bool response_busy = (response[1] & 0x80) != 0;
+    if (response_address != expected_address) {
+        return false;
+    }
+
+    if (value != nullptr) {
+        *value = response[2];
+    }
+    if (busy != nullptr) {
+        *busy = response_busy;
+    }
+    return true;
+}
+
+bool Encoder::tamagawa_wait_for_eeprom_write_cycle() {
+    HAL_Delay(TAMAGAWA_EEPROM_WRITE_DELAY_MS);
+    return true;
+}
+
+bool Encoder::tamagawa_select_eeprom_page(uint8_t page) {
+    if (tamagawa_eeprom_page_ == page) {
+        return true;
+    }
+
+    uint8_t response[4];
+    bool busy = false;
+    if (!tamagawa_send_eeprom_write_transaction(TAMAGAWA_EEPROM_PAGE_SELECT_ADDRESS, page, response)
+            || !tamagawa_parse_eeprom_response(TAMAGAWA_DATA_ID_EEPROM_WRITE,
+                    TAMAGAWA_EEPROM_PAGE_SELECT_ADDRESS, response, nullptr, &busy)) {
+        return false;
+    }
+
+    if (!tamagawa_wait_for_eeprom_write_cycle()) {
+        return false;
+    }
+
+    tamagawa_eeprom_page_ = page;
+    (void)busy;
     return true;
 }
 
@@ -1160,7 +1346,7 @@ bool Encoder::tamagawa_execute_reset_sequence(uint8_t data_id) {
         return false;
     }
 
-    if (!tamagawa_can_run_reset_command()) {
+    if (!tamagawa_can_run_manual_command()) {
         return false;
     }
 

@@ -19,15 +19,21 @@ public:
     static constexpr uint8_t TAMAGAWA_DATA_ID_MULTI_TURN = 0x1;
     static constexpr uint8_t TAMAGAWA_DATA_ID_ENCODER_ID = 0x2;
     static constexpr uint8_t TAMAGAWA_DATA_ID_FULL = 0x3;
+    static constexpr uint8_t TAMAGAWA_DATA_ID_EEPROM_WRITE = 0x6;
     static constexpr uint8_t TAMAGAWA_DATA_ID_RESET_ERRORS = 0x7;
     static constexpr uint8_t TAMAGAWA_DATA_ID_RESET_SINGLE_TURN = 0x8;
     static constexpr uint8_t TAMAGAWA_DATA_ID_RESET_MULTI_TURN_ERRORS = 0xC;
+    static constexpr uint8_t TAMAGAWA_DATA_ID_EEPROM_READ = 0xD;
     static constexpr uint8_t TAMAGAWA_SINK_CODE = 0x2; // b010, transmitted LSB-first by UART
     static constexpr uint8_t TAMAGAWA_TS5700N8501_ENID = 0x17;
+    static constexpr uint8_t TAMAGAWA_EEPROM_PAGE_SELECT_ADDRESS = 127;
+    static constexpr uint8_t TAMAGAWA_TEMPERATURE_PAGE = 7;
+    static constexpr uint8_t TAMAGAWA_TEMPERATURE_ADDRESS = 5;
     static constexpr size_t TAMAGAWA_MAX_TX_FRAME_SIZE = 4;
     static constexpr size_t TAMAGAWA_RESP_FRAME_SIZE = 11;
     static constexpr uint8_t TAMAGAWA_RESET_REPEAT_COUNT = 10;
     static constexpr uint32_t TAMAGAWA_RESET_MIN_SPACING_US = 40;
+    static constexpr uint32_t TAMAGAWA_EEPROM_WRITE_DELAY_MS = 20;
     static constexpr std::array<float, 6> hall_edge_defaults = 
         {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
 
@@ -100,6 +106,9 @@ public:
     bool tamagawa_clear_encoder_errors();
     bool tamagawa_reset_single_turn();
     bool tamagawa_reset_multi_turn_and_errors();
+    std::tuple<bool, uint8_t, bool> tamagawa_read_eeprom(uint8_t page, uint8_t address);
+    std::tuple<bool, bool> tamagawa_write_eeprom(uint8_t page, uint8_t address, uint8_t value);
+    std::tuple<bool, float> tamagawa_read_temperature();
     void sample_now();
     bool read_sampled_gpio(Stm32Gpio gpio);
     void decode_hall_samples();
@@ -175,8 +184,13 @@ public:
     bool tamagawa_decode_position(uint8_t* data);
     bool tamagawa_execute_reset_sequence(uint8_t data_id);
     bool tamagawa_send_blocking_transaction(uint8_t data_id, uint8_t* response);
+    bool tamagawa_send_eeprom_read_transaction(uint8_t address, uint8_t* response);
+    bool tamagawa_send_eeprom_write_transaction(uint8_t address, uint8_t value, uint8_t* response);
+    bool tamagawa_parse_eeprom_response(uint8_t expected_data_id, uint8_t expected_address, uint8_t* response, uint8_t* value, bool* busy);
+    bool tamagawa_select_eeprom_page(uint8_t page);
+    bool tamagawa_wait_for_eeprom_write_cycle();
     bool tamagawa_validate_response(uint8_t* data, uint8_t data_id, bool allow_encoder_error_bits);
-    bool tamagawa_can_run_reset_command();
+    bool tamagawa_can_run_manual_command();
     uint8_t tamagawa_calc_crc(uint8_t* data, size_t len);
     uint8_t tamagawa_build_cf(uint8_t data_id);
     bool tamagawa_data_id_supported_for_polling(uint8_t data_id);
@@ -196,6 +210,7 @@ public:
     uint8_t tamagawa_status_ = 0; // Status field from encoder
     uint8_t tamagawa_almc_ = 0;   // ALMC (alarm code) from encoder
     uint8_t tamagawa_enid_ = 0;
+    uint8_t tamagawa_eeprom_page_ = 0;
     uint32_t tamagawa_multi_turn_ = 0;
     uint32_t tamagawa_error_count_ = 0; // Error counter for debugging
 

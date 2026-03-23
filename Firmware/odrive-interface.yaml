@@ -1379,6 +1379,35 @@ interfaces:
         doc: |
           Sends Tamagawa Data ID C ten times to reset the multi-turn counter and clear errors.
           Only valid for `MODE_UART_ABS_TAMAGAWA` while the motor is disarmed.
+      tamagawa_read_eeprom:
+        in:
+          page: uint8
+          address: uint8
+        out:
+          success: bool
+          value: uint8
+          busy: bool
+        doc: |
+          Reads one EEPROM byte using Tamagawa Data ID D.
+          The page is selected automatically by writing address 127 before the read.
+      tamagawa_write_eeprom:
+        in:
+          page: uint8
+          address: uint8
+          value: uint8
+        out:
+          success: bool
+          busy: bool
+        doc: |
+          Writes one EEPROM byte using Tamagawa Data ID 6.
+          The page is selected automatically by writing address 127 before the write.
+      tamagawa_read_temperature:
+        out:
+          success: bool
+          temperature_c: float32
+        doc: |
+          Reads the TS5700N8501 internal temperature from EEPROM page 7, address 5.
+          The returned value is the raw Celsius value documented by Tamagawa.
 
 
   ODrive.SensorlessEstimator:
