@@ -38,14 +38,24 @@ char serial_number_str[13]; // 12 digits + null termination
 void init_communication(void) {
     //printf("hi!\r\n");
 
-    // Dual UART operation not supported yet
-    if (odrv.config_.enable_uart_a && odrv.config_.enable_uart_b) {
+    const bool uart_a_reserved_for_tamagawa =
+            encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+    const bool uart_b_reserved_for_tamagawa =
+            encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+
+    const bool uart_a_available_for_comms =
+            odrv.config_.enable_uart_a && uart_a && !uart_a_reserved_for_tamagawa;
+    const bool uart_b_available_for_comms =
+            odrv.config_.enable_uart_b && uart_b && !uart_b_reserved_for_tamagawa;
+
+    // ASCII/Fibre over UART still supports one host UART at a time.
+    if (uart_a_available_for_comms && uart_b_available_for_comms) {
         odrv.misconfigured_ = true;
     }
 
-    if (odrv.config_.enable_uart_a && uart_a) {
+    if (uart_a_available_for_comms) {
         start_uart_server(uart_a);
-    } else if (odrv.config_.enable_uart_b && uart_b) {
+    } else if (uart_b_available_for_comms) {
         start_uart_server(uart_b);
     }
 

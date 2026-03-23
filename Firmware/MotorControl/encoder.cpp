@@ -26,6 +26,8 @@ bool Encoder::apply_config(ODriveIntf::MotorIntf::MotorType motor_type) {
             is_ready_ = true;
         if (config_.mode == Encoder::MODE_SINCOS)
             is_ready_ = true;
+        if (config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA)
+            is_ready_ = true;
         if (motor_type == Motor::MOTOR_TYPE_ACIM)
             is_ready_ = true;
     }
@@ -58,10 +60,20 @@ void Encoder::setup() {
     }
 
     if(mode_ & MODE_FLAG_ABS){
-        abs_spi_cs_pin_init();
+        // Skip SPI CS pin initialization for Tamagawa mode (uses UART, not SPI)
+        if (mode_ != MODE_UART_ABS_TAMAGAWA) {
+            abs_spi_cs_pin_init();
+        }
 
         if (axis_->controller_.config_.anticogging.pre_calibrated) {
             axis_->controller_.anticogging_valid_ = true;
+        }
+    }
+    
+    // Initialize Tamagawa encoder if selected
+    if (mode_ == MODE_UART_ABS_TAMAGAWA) {
+        if (!tamagawa_init()) {
+            set_error(ERROR_ABS_SPI_COM_FAIL); // Reuse SPI error for UART communication failure
         }
     }
 }
@@ -498,6 +510,13 @@ void Encoder::sample_now() {
             abs_spi_start_transaction();
             // Do nothing
         } break;
+        
+        case MODE_UART_ABS_TAMAGAWA:
+        {
+            // Use DMA for non-blocking communication
+            // This allows both axes to communicate in parallel
+            tamagawa_send_command_dma(config_.tamagawa_data_id);
+        } break;
 
         default: {
            set_error(ERROR_UNSUPPORTED_ENCODER_MODE);
@@ -753,6 +772,56 @@ bool Encoder::update() {
             }
 
         }break;
+        
+        case MODE_UART_ABS_TAMAGAWA: {
+            // Check for timeout first
+            if (tamagawa_check_timeout()) {
+                spi_error_rate_ += current_meas_period * (1.0f - spi_error_rate_);
+                if (spi_error_rate_ > 0.05f) {
+                    set_error(ERROR_ABS_SPI_COM_FAIL);
+                    return false;
+                }
+            }
+            // Check if DMA transfer completed
+            else if (!tamagawa_rx_complete_) {
+                // DMA not complete yet, check error rate
+                spi_error_rate_ += current_meas_period * (1.0f - spi_error_rate_);
+                if (spi_error_rate_ > 0.05f) {
+                    set_error(ERROR_ABS_SPI_COM_FAIL);
+                    return false;
+                }
+                // Use previous position (no update)
+                delta_enc = 0;
+            } else {
+                // DMA completed successfully
+                tamagawa_dma_active_ = false;
+                
+                // Low pass filter the error (success)
+                spi_error_rate_ += current_meas_period * (0.0f - spi_error_rate_);
+                
+                // Decode position from received data
+                if (!tamagawa_decode_position(tamagawa_rx_buffer_)) {
+                    // Decode failed
+                    tamagawa_error_count_++;
+                    spi_error_rate_ += current_meas_period * (1.0f - spi_error_rate_);
+                    if (spi_error_rate_ > 0.05f) {
+                        set_error(ERROR_ABS_SPI_COM_FAIL);
+                        return false;
+                    }
+                }
+            }
+            
+            // Calculate position delta (only if we have new data)
+            if (tamagawa_rx_complete_) {
+                tamagawa_rx_complete_ = false;
+                delta_enc = pos_abs_latched - count_in_cpr_; //LATCH
+                delta_enc = mod(delta_enc, config_.cpr);
+                if (delta_enc > config_.cpr/2) {
+                    delta_enc -= config_.cpr;
+                }
+            }
+        } break;
+        
         default: {
             set_error(ERROR_UNSUPPORTED_ENCODER_MODE);
             return false;
@@ -839,4 +908,270 @@ bool Encoder::update() {
     }
 
     return true;
+}
+
+// Tamagawa encoder protocol implementation
+
+bool Encoder::tamagawa_init() {
+    if (config_.tamagawa_uart == nullptr) {
+        return false;
+    }
+    
+    // DE/RE control is handled by hardware auto-direction circuit
+    // No GPIO initialization needed
+    
+    // Clear buffers
+    memset(tamagawa_rx_buffer_, 0, sizeof(tamagawa_rx_buffer_));
+    memset(tamagawa_tx_buffer_, 0, sizeof(tamagawa_tx_buffer_));
+    
+    tamagawa_rx_complete_ = false;
+    tamagawa_tx_complete_ = false;
+    tamagawa_dma_active_ = false;
+    tamagawa_last_communication_ = 0;
+    tamagawa_error_count_ = 0;
+    
+    return true;
+}
+
+uint8_t Encoder::tamagawa_calc_crc(uint8_t* data, size_t len) {
+    uint8_t crc = 0;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (int j = 0; j < 8; j++) {
+            if (crc & 0x80) {
+                crc = (crc << 1) ^ 0x01; // Polynomial X^8 + 1
+            } else {
+                crc = crc << 1;
+            }
+        }
+    }
+    return crc;
+}
+
+// Blocking send command (fallback, not recommended for 8kHz)
+bool Encoder::tamagawa_send_command(uint8_t cmd) {
+    if (config_.tamagawa_uart == nullptr) {
+        return false;
+    }
+    
+    // Prepare command frame: [CF] [CRC]
+    tamagawa_tx_buffer_[0] = cmd;
+    tamagawa_tx_buffer_[1] = tamagawa_calc_crc(&cmd, 1);
+    
+    // Transmit command (blocking)
+    HAL_StatusTypeDef status = HAL_UART_Transmit(config_.tamagawa_uart, tamagawa_tx_buffer_, TAMAGAWA_CMD_FRAME_SIZE, 10);
+    
+    if (status != HAL_OK) {
+        return false;
+    }
+    
+    // Start receiving response (interrupt mode)
+    tamagawa_rx_complete_ = false;
+    status = HAL_UART_Receive_IT(config_.tamagawa_uart, tamagawa_rx_buffer_, TAMAGAWA_RESP_FRAME_SIZE);
+    
+    if (status != HAL_OK) {
+        return false;
+    }
+    
+    tamagawa_last_communication_ = HAL_GetTick();
+    return true;
+}
+
+// Non-blocking DMA send command (recommended for 8kHz)
+bool Encoder::tamagawa_send_command_dma(uint8_t cmd) {
+    if (config_.tamagawa_uart == nullptr) {
+        return false;
+    }
+    
+    // Check if previous DMA transfer is still active
+    if (tamagawa_dma_active_) {
+        // Previous transfer not complete, skip this cycle
+        return false;
+    }
+    
+    // Prepare command frame: [CF] [CRC]
+    tamagawa_tx_buffer_[0] = cmd;
+    tamagawa_tx_buffer_[1] = tamagawa_calc_crc(&cmd, 1);
+    
+    // Reset flags
+    tamagawa_rx_complete_ = false;
+    tamagawa_tx_complete_ = false;
+    tamagawa_dma_active_ = true;
+    
+    // Start DMA receive first (to be ready when response arrives)
+    HAL_StatusTypeDef status = HAL_UART_Receive_DMA(
+        config_.tamagawa_uart,
+        tamagawa_rx_buffer_,
+        TAMAGAWA_RESP_FRAME_SIZE
+    );
+    
+    if (status != HAL_OK) {
+        tamagawa_dma_active_ = false;
+        tamagawa_error_count_++;
+        return false;
+    }
+    
+    // Start DMA transmit
+    status = HAL_UART_Transmit_DMA(
+        config_.tamagawa_uart,
+        tamagawa_tx_buffer_,
+        TAMAGAWA_CMD_FRAME_SIZE
+    );
+    
+    if (status != HAL_OK) {
+        // Abort receive if transmit fails
+        HAL_UART_AbortReceive(config_.tamagawa_uart);
+        tamagawa_dma_active_ = false;
+        tamagawa_error_count_++;
+        return false;
+    }
+    
+    tamagawa_last_communication_ = HAL_GetTick();
+    return true;
+}
+
+bool Encoder::tamagawa_check_timeout() {
+    if (!tamagawa_dma_active_) {
+        return false; // No timeout if not active
+    }
+    
+    uint32_t current_time = HAL_GetTick();
+    uint32_t elapsed = current_time - tamagawa_last_communication_;
+    
+    if (elapsed >= tamagawa_timeout_ms_) {
+        // Timeout occurred, abort DMA transfers
+        HAL_UART_AbortTransmit(config_.tamagawa_uart);
+        HAL_UART_AbortReceive(config_.tamagawa_uart);
+        tamagawa_dma_active_ = false;
+        tamagawa_error_count_++;
+        return true;
+    }
+    
+    return false;
+}
+
+bool Encoder::tamagawa_decode_position(uint8_t* data) {
+    // Data format: [CF] [SF] [DF0] [DF1] [DF2] [DF3] [DF4] [DF5] [DF6] [DF7] [CRC]
+    // For Data ID 0x03 (full data): DF0-DF2 = ABS0-ABS2 (single-turn), DF3 = ENID, DF4-DF6 = ABM0-ABM2 (multi-turn), DF7 = ALMC
+    
+    if (data == nullptr) {
+        return false;
+    }
+    
+    // Verify CRC
+    uint8_t received_crc = data[TAMAGAWA_RESP_FRAME_SIZE - 1]; // Last byte is CRC
+    uint8_t calculated_crc = tamagawa_calc_crc(data, TAMAGAWA_RESP_FRAME_SIZE - 1);
+    
+    if (received_crc != calculated_crc) {
+        return false;
+    }
+    
+    // Store status field
+    tamagawa_status_ = data[1]; // SF
+    
+    // Check for communication errors in status field
+    if (tamagawa_check_error(tamagawa_status_)) {
+        return false;
+    }
+    
+    // Extract single-turn position (17 bits)
+    // ABS0 (DF0) = bits 0-7
+    // ABS1 (DF1) = bits 8-15
+    // ABS2 (DF2) = bits 16-23, but only lower 2 bits are valid (bits 16-17)
+    uint32_t single_turn = (uint32_t)data[2] | ((uint32_t)data[3] << 8) | (((uint32_t)data[4] & 0x03) << 16);
+    
+    // Extract multi-turn count (16 bits)
+    // ABM0 (DF4) = bits 0-7
+    // ABM1 (DF5) = bits 8-15
+    // ABM2 (DF6) = bits 16-23, but only lower 8 bits are valid (bits 16-23)
+    uint32_t multi_turn = (uint32_t)data[6] | ((uint32_t)data[7] << 8) | ((uint32_t)data[8] << 16);
+    (void)multi_turn;
+    
+    // Store ALMC (alarm code)
+    tamagawa_almc_ = data[9]; // DF7 = ALMC
+    
+    // Combine single-turn and multi-turn into absolute position
+    // For Tamagawa TS5700N8501: 17-bit single-turn + 16-bit multi-turn = 33-bit absolute position
+    // However, ODrive typically uses 32-bit or less for position
+    // We'll use the combined value and let the user configure CPR appropriately
+    
+    // Calculate absolute position: multi_turn * (2^17) + single_turn
+    // This gives a 33-bit value, but we'll store it in a 32-bit variable
+    // The user should set CPR to 2^17 (131072) for single-turn operation
+    // or handle multi-turn separately if needed
+    
+    // Store single-turn position (17 bits) in pos_abs_
+    pos_abs_ = (int32_t)single_turn;
+    
+    // For multi-turn support, we could update shadow_count_ as:
+    // shadow_count_ = multi_turn * 131072 + single_turn;
+    // But this would require 33 bits, so we'll just use single-turn for now
+    // and let the PLL handle multi-turn tracking
+    
+    // Mark that we have new data
+    abs_spi_pos_updated_ = true;
+    
+    // If pre-calibrated, mark as ready
+    if (config_.pre_calibrated) {
+        is_ready_ = true;
+    }
+    
+    return true;
+}
+
+bool Encoder::tamagawa_check_error(uint8_t sts) {
+    // Check status field for errors
+    // ea0 = 1: counting error
+    // ea1 = 1: over-heat, multi-turn error, battery error, or battery alarm
+    // ca0 = 1: parity error in request frame
+    // ca1 = 1: stop bit error in request frame
+    
+    if (sts & 0x03) { // ea0 or ea1
+        return true;
+    }
+    
+    // ca0 and ca1 are communication alarms, might not be critical for position reading
+    // but we'll consider them as errors for now
+    if (sts & 0x0C) { // ca0 or ca1
+        return true;
+    }
+    
+    return false;
+}
+
+extern "C" void tamagawa_uart_tx_complete_callback(UART_HandleTypeDef *huart) {
+    // Find which encoder uses this UART handle
+    for (int i = 0; i < AXIS_COUNT; i++) {
+        if (encoders[i].config_.tamagawa_uart == huart) {
+            // Transmit complete, mark as done
+            encoders[i].tamagawa_tx_complete_ = true;
+            break;
+        }
+    }
+}
+
+extern "C" void tamagawa_uart_rx_complete_callback(UART_HandleTypeDef *huart) {
+    // Find which encoder uses this UART handle
+    for (int i = 0; i < AXIS_COUNT; i++) {
+        if (encoders[i].config_.tamagawa_uart == huart) {
+            // Receive complete, mark as done
+            encoders[i].tamagawa_rx_complete_ = true;
+            encoders[i].tamagawa_dma_active_ = false;
+            break;
+        }
+    }
+}
+
+extern "C" void tamagawa_uart_error_callback(UART_HandleTypeDef *huart) {
+    // Find which encoder uses this UART handle
+    for (int i = 0; i < AXIS_COUNT; i++) {
+        if (encoders[i].config_.tamagawa_uart == huart) {
+            // Error occurred, abort transfers and mark as complete
+            HAL_UART_AbortTransmit(huart);
+            HAL_UART_AbortReceive(huart);
+            encoders[i].tamagawa_dma_active_ = false;
+            encoders[i].tamagawa_error_count_++;
+            break;
+        }
+    }
 }

@@ -534,7 +534,8 @@ static void rtos_main(void*) {
 
     // Set up the CS pins for absolute encoders (TODO: move to GPIO init switch statement)
     for(auto& axis : axes){
-        if(axis.encoder_.config_.mode & Encoder::MODE_FLAG_ABS){
+        if ((axis.encoder_.config_.mode & Encoder::MODE_FLAG_ABS)
+                && axis.encoder_.config_.mode != Encoder::MODE_UART_ABS_TAMAGAWA) {
             axis.encoder_.abs_spi_cs_pin_init();
         }
     }
@@ -685,6 +686,21 @@ extern "C" int main(void) {
         for (;;); // TODO: handle properly
     }
 
+    const bool uart_a_required_by_tamagawa =
+            encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+    const bool uart_b_required_by_tamagawa =
+            encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+
+    // Reserve GPIOs for Tamagawa encoders regardless of generic UART host settings.
+    if (uart_a_required_by_tamagawa) {
+        odrv.config_.gpio_modes[1] = ODriveIntf::GPIO_MODE_UART_A; // GPIO1 / PA0
+        odrv.config_.gpio_modes[2] = ODriveIntf::GPIO_MODE_UART_A; // GPIO2 / PA1
+    }
+    if (uart_b_required_by_tamagawa) {
+        odrv.config_.gpio_modes[3] = ODriveIntf::GPIO_MODE_UART_B; // GPIO3 / PA2
+        odrv.config_.gpio_modes[4] = ODriveIntf::GPIO_MODE_UART_B; // GPIO4 / PA3
+    }
+
     // Init GPIOs according to their configured mode
     for (size_t i = 0; i < GPIO_COUNT; ++i) {
         // Skip unavailable GPIOs
@@ -741,7 +757,7 @@ extern "C" int main(void) {
                 GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
                 GPIO_InitStruct.Pull = (i == 0) ? GPIO_PULLDOWN : GPIO_PULLUP; // this is probably swapped but imitates old behavior
                 GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-                if (!odrv.config_.enable_uart_a) {
+                if (!odrv.config_.enable_uart_a && !uart_a_required_by_tamagawa) {
                     odrv.misconfigured_ = true;
                 }
             } break;
@@ -749,7 +765,7 @@ extern "C" int main(void) {
                 GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
                 GPIO_InitStruct.Pull = (i == 0) ? GPIO_PULLDOWN : GPIO_PULLUP; // this is probably swapped but imitates old behavior
                 GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-                if (!odrv.config_.enable_uart_b) {
+                if (!odrv.config_.enable_uart_b && !uart_b_required_by_tamagawa) {
                     odrv.misconfigured_ = true;
                 }
             } break;

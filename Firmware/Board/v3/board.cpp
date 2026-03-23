@@ -35,6 +35,7 @@ Stm32SpiArbiter& ext_spi_arbiter = spi3_arbiter;
 UART_HandleTypeDef* uart_a = &huart4;
 UART_HandleTypeDef* uart_b = &huart2; // TODO: this could be supported in ODrive v3.6 (or similar) using STM32's USART2
 UART_HandleTypeDef* uart_c = nullptr;
+static constexpr uint32_t kTamagawaBaudrate = 2500000;
 
 Drv8301 m0_gate_driver{
     &spi3_arbiter,
@@ -111,6 +112,18 @@ Encoder encoders[AXIS_COUNT] = {
         &spi3_arbiter // spi_arbiter
     }
 };
+
+// Configure Tamagawa encoder UART interfaces
+// Axis 0: UART4 (PA0/PA1) for Tamagawa encoder
+// Axis 1: USART2 (PA2/PA3) for Tamagawa encoder
+void configure_tamagawa_encoders() {
+    // Set UART handles for Tamagawa encoders
+    encoders[0].config_.tamagawa_uart = uart_a; // UART4
+    encoders[1].config_.tamagawa_uart = uart_b; // USART2
+    
+    // DE/RE control is handled by hardware auto-direction circuit
+    // No GPIO configuration needed
+}
 
 // TODO: this has no hardware dependency and should be allocated depending on config
 Endstop endstops[2 * AXIS_COUNT];
@@ -327,15 +340,21 @@ bool board_init() {
     HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
 
-    if (odrv.config_.enable_uart_a) {
-        uart_a->Init.BaudRate = odrv.config_.uart_a_baudrate;
+    const bool axis0_uses_tamagawa = encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+    const bool axis1_uses_tamagawa = encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+
+    if (odrv.config_.enable_uart_a || axis0_uses_tamagawa) {
+        uart_a->Init.BaudRate = axis0_uses_tamagawa ? kTamagawaBaudrate : odrv.config_.uart_a_baudrate;
         MX_UART4_Init();
     }
 
-    if (odrv.config_.enable_uart_b) {
-        uart_b->Init.BaudRate = odrv.config_.uart_b_baudrate;
+    if (odrv.config_.enable_uart_b || axis1_uses_tamagawa) {
+        uart_b->Init.BaudRate = axis1_uses_tamagawa ? kTamagawaBaudrate : odrv.config_.uart_b_baudrate;
         MX_USART2_UART_Init();
     }
+    
+    // Configure Tamagawa encoder UART interfaces
+    configure_tamagawa_encoders();
 
     if (odrv.config_.enable_i2c_a) {
         // Set up the direction GPIO as input

@@ -8,11 +8,15 @@ class Encoder;
 #include "utils.hpp"
 #include <autogen/interfaces.hpp>
 #include "component.hpp"
+#include "usart.h" // For UART_HandleTypeDef
 
 
 class Encoder : public ODriveIntf::EncoderIntf {
 public:
     static constexpr uint32_t MODE_FLAG_ABS = 0x100;
+    static constexpr uint32_t MODE_UART_ABS_TAMAGAWA = 0x105;
+    static constexpr size_t TAMAGAWA_CMD_FRAME_SIZE = 2;
+    static constexpr size_t TAMAGAWA_RESP_FRAME_SIZE = 11;
     static constexpr std::array<float, 6> hall_edge_defaults = 
         {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
 
@@ -43,6 +47,11 @@ public:
         uint16_t abs_spi_cs_gpio_pin = 1;
         uint16_t sincos_gpio_pin_sin = 3;
         uint16_t sincos_gpio_pin_cos = 4;
+        
+        // Tamagawa encoder configuration
+        UART_HandleTypeDef* tamagawa_uart = nullptr; // UART handle for Tamagawa communication
+        Stm32Gpio tamagawa_de_re_gpio; // GPIO for RS485 DE/RE direction control
+        uint8_t tamagawa_data_id = 0x03; // Data ID for reading (default: 0x03 for full data)
 
 
         // custom setters
@@ -144,11 +153,36 @@ public:
     uint16_t abs_spi_dma_tx_[1] = {0xFFFF};
     uint16_t abs_spi_dma_rx_[1];
     Stm32SpiArbiter::SpiTask spi_task_;
+    
+    // Tamagawa encoder functions
+    bool tamagawa_init();
+    bool tamagawa_send_command(uint8_t cmd);
+    bool tamagawa_send_command_dma(uint8_t cmd);
+    bool tamagawa_decode_position(uint8_t* data);
+    uint8_t tamagawa_calc_crc(uint8_t* data, size_t len);
+    bool tamagawa_check_error(uint8_t sts);
+    bool tamagawa_check_timeout();
+    
+    // Tamagawa encoder state
+    uint8_t tamagawa_rx_buffer_[12]; // Buffer for receiving data (CF+SF+DF0-DF7+CRC = 11 bytes, plus margin)
+    uint8_t tamagawa_tx_buffer_[TAMAGAWA_CMD_FRAME_SIZE];  // Buffer for transmitting command (CF+CRC)
+    volatile bool tamagawa_rx_complete_ = false;
+    volatile bool tamagawa_tx_complete_ = false;
+    volatile bool tamagawa_dma_active_ = false; // DMA transfer in progress
+    uint32_t tamagawa_last_communication_ = 0;
+    uint32_t tamagawa_timeout_ms_ = 2; // Timeout in ms (default 2ms, should be much faster)
+    uint8_t tamagawa_status_ = 0; // Status field from encoder
+    uint8_t tamagawa_almc_ = 0;   // ALMC (alarm code) from encoder
+    uint32_t tamagawa_error_count_ = 0; // Error counter for debugging
 
     constexpr float getCoggingRatio(){
         return 1.0f / 3600.0f;
     }
 
 };
+
+extern "C" void tamagawa_uart_tx_complete_callback(UART_HandleTypeDef *huart);
+extern "C" void tamagawa_uart_rx_complete_callback(UART_HandleTypeDef *huart);
+extern "C" void tamagawa_uart_error_callback(UART_HandleTypeDef *huart);
 
 #endif // __ENCODER_HPP
