@@ -340,21 +340,28 @@ bool board_init() {
     HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
 
+    configure_tamagawa_encoders();
+
     const bool axis0_uses_tamagawa = encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
     const bool axis1_uses_tamagawa = encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+    const bool uart_a_used_by_tamagawa =
+            (axis0_uses_tamagawa && encoders[0].config_.tamagawa_uart == uart_a)
+            || (axis1_uses_tamagawa && encoders[1].config_.tamagawa_uart == uart_a);
+    const bool uart_b_used_by_tamagawa =
+            (axis0_uses_tamagawa && encoders[0].config_.tamagawa_uart == uart_b)
+            || (axis1_uses_tamagawa && encoders[1].config_.tamagawa_uart == uart_b);
+    const bool uart_a_should_be_initialized = odrv.config_.enable_uart_a || uart_a_used_by_tamagawa;
+    const bool uart_b_should_be_initialized = odrv.config_.enable_uart_b || uart_b_used_by_tamagawa;
 
-    if (odrv.config_.enable_uart_a || axis0_uses_tamagawa) {
-        uart_a->Init.BaudRate = axis0_uses_tamagawa ? kTamagawaBaudrate : odrv.config_.uart_a_baudrate;
+    if (uart_a_should_be_initialized) {
+        uart_a->Init.BaudRate = uart_a_used_by_tamagawa ? kTamagawaBaudrate : odrv.config_.uart_a_baudrate;
         MX_UART4_Init();
     }
 
-    if (odrv.config_.enable_uart_b || axis1_uses_tamagawa) {
-        uart_b->Init.BaudRate = axis1_uses_tamagawa ? kTamagawaBaudrate : odrv.config_.uart_b_baudrate;
+    if (uart_b_should_be_initialized) {
+        uart_b->Init.BaudRate = uart_b_used_by_tamagawa ? kTamagawaBaudrate : odrv.config_.uart_b_baudrate;
         MX_USART2_UART_Init();
     }
-    
-    // Configure Tamagawa encoder UART interfaces
-    configure_tamagawa_encoders();
 
     if (odrv.config_.enable_i2c_a) {
         // Set up the direction GPIO as input

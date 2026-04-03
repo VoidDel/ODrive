@@ -3,6 +3,14 @@
 #include <Drivers/STM32/stm32_system.h>
 #include <bitset>
 
+static inline void tamagawa_set_debug(uint8_t stage, uint8_t info, HAL_StatusTypeDef tx_status, HAL_StatusTypeDef rx_status) {
+    odrv.test_property_ =
+            ((uint32_t)stage << 24)
+            | ((uint32_t)info << 16)
+            | ((uint32_t)(uint8_t)tx_status << 8)
+            | ((uint32_t)(uint8_t)rx_status);
+}
+
 Encoder::Encoder(TIM_HandleTypeDef* timer, Stm32Gpio index_gpio,
                  Stm32Gpio hallA_gpio, Stm32Gpio hallB_gpio, Stm32Gpio hallC_gpio,
                  Stm32SpiArbiter* spi_arbiter) :
@@ -487,7 +495,9 @@ bool Encoder::tamagawa_reset_multi_turn_and_errors() {
 }
 
 std::tuple<bool, uint8_t, bool> Encoder::tamagawa_read_eeprom(uint8_t page, uint8_t address) {
+    tamagawa_set_debug(0x50, address, HAL_OK, HAL_OK);
     if (!tamagawa_can_run_manual_command()) {
+        tamagawa_set_debug(0x51, address, HAL_BUSY, HAL_BUSY);
         return std::make_tuple(false, uint8_t{0}, false);
     }
 
@@ -498,17 +508,24 @@ std::tuple<bool, uint8_t, bool> Encoder::tamagawa_read_eeprom(uint8_t page, uint
     HAL_UART_AbortTransmit(config_.tamagawa_uart);
     HAL_UART_AbortReceive(config_.tamagawa_uart);
     tamagawa_dma_active_ = false;
+    tamagawa_waiting_for_rx_ = false;
     tamagawa_rx_complete_ = false;
     tamagawa_tx_complete_ = false;
+    tamagawa_set_debug(0x52, address, HAL_OK, HAL_OK);
 
     bool success = false;
     uint8_t value = 0;
     bool busy = false;
     uint8_t response[4];
 
-    if (tamagawa_select_eeprom_page(page)
-            && tamagawa_send_eeprom_read_transaction(address, response)
-            && tamagawa_parse_eeprom_response(TAMAGAWA_DATA_ID_EEPROM_READ, address, response, &value, &busy)) {
+    if (!tamagawa_select_eeprom_page(page)) {
+        tamagawa_set_debug(0x53, page, HAL_ERROR, HAL_ERROR);
+    } else if (!tamagawa_send_eeprom_read_transaction(address, response)) {
+        tamagawa_set_debug(0x54, address, HAL_ERROR, HAL_ERROR);
+    } else if (!tamagawa_parse_eeprom_response(TAMAGAWA_DATA_ID_EEPROM_READ, address, response, &value, &busy)) {
+        tamagawa_set_debug(0x55, address, HAL_ERROR, HAL_ERROR);
+    } else {
+        tamagawa_set_debug(0x56, address, HAL_OK, HAL_OK);
         success = true;
     }
 
@@ -535,6 +552,7 @@ std::tuple<bool, bool> Encoder::tamagawa_write_eeprom(uint8_t page, uint8_t addr
     HAL_UART_AbortTransmit(config_.tamagawa_uart);
     HAL_UART_AbortReceive(config_.tamagawa_uart);
     tamagawa_dma_active_ = false;
+    tamagawa_waiting_for_rx_ = false;
     tamagawa_rx_complete_ = false;
     tamagawa_tx_complete_ = false;
 
@@ -611,9 +629,13 @@ void Encoder::sample_now() {
             if (tamagawa_manual_transaction_active_) {
                 break;
             }
-            // Use DMA for non-blocking communication
-            // This allows both axes to communicate in parallel
-            tamagawa_send_command_dma(config_.tamagawa_data_id);
+            const uint32_t now_us = micros();
+            if ((uint32_t)(now_us - tamagawa_last_poll_us_) >= TAMAGAWA_POLL_INTERVAL_US) {
+                tamagawa_last_poll_us_ = now_us;
+                // Use DMA for non-blocking communication
+                // This allows both axes to communicate in parallel
+                tamagawa_send_command_dma(TAMAGAWA_DATA_ID_ABS);
+            }
         } break;
 
         default: {
@@ -886,17 +908,42 @@ bool Encoder::update() {
             }
             // Check if DMA transfer completed
             else if (!tamagawa_rx_complete_) {
-                // DMA not complete yet, check error rate
-                spi_error_rate_ += current_meas_period * (1.0f - spi_error_rate_);
-                if (spi_error_rate_ > 0.05f) {
-                    set_error(ERROR_ABS_SPI_COM_FAIL);
-                    return false;
+                if (tamagawa_dma_active_) {
+                    // Fallback: on some paths RxCplt callback may be missed even though
+                    // DMA already transferred all requested bytes.
+                    if (config_.tamagawa_uart != nullptr
+                            && config_.tamagawa_uart->hdmarx != nullptr
+                            && config_.tamagawa_uart->hdmarx->Instance != nullptr
+                            && config_.tamagawa_uart->RxXferSize > 0) {
+                        const uint16_t remaining = config_.tamagawa_uart->hdmarx->Instance->NDTR;
+                        const uint16_t received = config_.tamagawa_uart->RxXferSize - std::min<uint16_t>(remaining, config_.tamagawa_uart->RxXferSize);
+                        const uint16_t required = (uint16_t)tamagawa_get_response_frame_size(tamagawa_last_data_id_);
+                        if (received >= required) {
+                            tamagawa_rx_complete_ = true;
+                            tamagawa_dma_active_ = false;
+                            tamagawa_waiting_for_rx_ = false;
+                            tamagawa_set_debug(0x73, (uint8_t)axis_->axis_num_, HAL_OK, HAL_OK);
+                        }
+                    }
+
+                    if (!tamagawa_rx_complete_) {
+                        // A transaction is in-flight but data is still incomplete.
+                        spi_error_rate_ += current_meas_period * (1.0f - spi_error_rate_);
+                        if (spi_error_rate_ > 0.05f) {
+                            set_error(ERROR_ABS_SPI_COM_FAIL);
+                            return false;
+                        }
+                    }
                 }
-                // Use previous position (no update)
+
+                // No new complete frame this control cycle.
                 delta_enc = 0;
-            } else {
+            }
+
+            if (tamagawa_rx_complete_) {
                 // DMA completed successfully
                 tamagawa_dma_active_ = false;
+                tamagawa_waiting_for_rx_ = false;
                 
                 // Low pass filter the error (success)
                 spi_error_rate_ += current_meas_period * (0.0f - spi_error_rate_);
@@ -1026,9 +1073,8 @@ bool Encoder::tamagawa_init() {
     // DE/RE control is handled by hardware auto-direction circuit
     // No GPIO initialization needed
 
-    // Tamagawa uses fixed-size request/response frames, so the RX DMA should
-    // complete once per response instead of wrapping forever like the UART
-    // server's circular receive path.
+    // Tamagawa polling uses bounded response sizes, so RX DMA should complete
+    // once per transaction instead of wrapping forever like the UART server.
     if (config_.tamagawa_uart->hdmarx != nullptr
             && config_.tamagawa_uart->hdmarx->Init.Mode != DMA_NORMAL) {
         config_.tamagawa_uart->hdmarx->Init.Mode = DMA_NORMAL;
@@ -1045,6 +1091,7 @@ bool Encoder::tamagawa_init() {
     tamagawa_rx_complete_ = false;
     tamagawa_tx_complete_ = false;
     tamagawa_dma_active_ = false;
+    tamagawa_waiting_for_rx_ = false;
     tamagawa_last_communication_ = 0;
     tamagawa_error_count_ = 0;
     tamagawa_last_data_id_ = config_.tamagawa_data_id;
@@ -1078,6 +1125,12 @@ uint8_t Encoder::tamagawa_build_cf(uint8_t data_id) {
     return TAMAGAWA_SINK_CODE | ((data_id & 0x0F) << 3) | (id_parity << 7);
 }
 
+size_t Encoder::tamagawa_get_response_frame_size(uint8_t data_id) {
+    return (data_id == TAMAGAWA_DATA_ID_ABS)
+            ? TAMAGAWA_RESP_FRAME_SIZE_ABS
+            : TAMAGAWA_RESP_FRAME_SIZE_FULL;
+}
+
 bool Encoder::tamagawa_data_id_supported_for_polling(uint8_t data_id) {
     return data_id == TAMAGAWA_DATA_ID_ABS || data_id == TAMAGAWA_DATA_ID_FULL;
 }
@@ -1096,18 +1149,19 @@ bool Encoder::tamagawa_send_command(uint8_t data_id) {
     // Regular position polling requests consist of a single Control Field.
     tamagawa_tx_buffer_[0] = tamagawa_build_cf(data_id);
     
-    // Transmit command (blocking)
-    HAL_StatusTypeDef status = HAL_UART_Transmit(config_.tamagawa_uart, tamagawa_tx_buffer_, 1, 10);
-    
+    const size_t response_len = tamagawa_get_response_frame_size(data_id);
+
+    // Start receiving response (interrupt mode) BEFORE transmit
+    tamagawa_rx_complete_ = false;
+    HAL_StatusTypeDef status = HAL_UART_Receive_IT(config_.tamagawa_uart, tamagawa_rx_buffer_, response_len);
     if (status != HAL_OK) {
         return false;
     }
-    
-    // Start receiving response (interrupt mode)
-    tamagawa_rx_complete_ = false;
-    status = HAL_UART_Receive_IT(config_.tamagawa_uart, tamagawa_rx_buffer_, TAMAGAWA_RESP_FRAME_SIZE);
-    
+
+    // Transmit command (blocking)
+    status = HAL_UART_Transmit(config_.tamagawa_uart, tamagawa_tx_buffer_, 1, 10);
     if (status != HAL_OK) {
+        HAL_UART_AbortReceive(config_.tamagawa_uart);
         return false;
     }
     
@@ -1124,6 +1178,7 @@ bool Encoder::tamagawa_send_command_dma(uint8_t data_id) {
 
     if (!tamagawa_data_id_supported_for_polling(data_id)) {
         tamagawa_error_count_++;
+        tamagawa_set_debug(0x10, data_id, HAL_ERROR, HAL_ERROR);
         return false;
     }
     
@@ -1141,32 +1196,40 @@ bool Encoder::tamagawa_send_command_dma(uint8_t data_id) {
     tamagawa_rx_complete_ = false;
     tamagawa_tx_complete_ = false;
     tamagawa_dma_active_ = true;
+    tamagawa_waiting_for_rx_ = true;
     
-    // Start DMA receive first (to be ready when response arrives)
-    HAL_StatusTypeDef status = HAL_UART_Receive_DMA(
+    const size_t response_len = tamagawa_get_response_frame_size(data_id);
+    const size_t rx_len = std::min(response_len + 1, sizeof(tamagawa_rx_buffer_));
+
+    // Arm RX DMA before TX to avoid missing fast responses at 2.5Mbps.
+    // Some RS485 transceivers echo the TX CF byte onto RX, so capture one
+    // extra byte and let the decoder realign using CF+CRC.
+    HAL_StatusTypeDef rx_status = HAL_UART_Receive_DMA(
         config_.tamagawa_uart,
         tamagawa_rx_buffer_,
-        TAMAGAWA_RESP_FRAME_SIZE
+        rx_len
     );
-    
-    if (status != HAL_OK) {
+    if (rx_status != HAL_OK) {
         tamagawa_dma_active_ = false;
+        tamagawa_waiting_for_rx_ = false;
         tamagawa_error_count_++;
+        tamagawa_set_debug(0x12, data_id, HAL_OK, rx_status);
         return false;
     }
-    
+
     // Start DMA transmit
-    status = HAL_UART_Transmit_DMA(
+    HAL_StatusTypeDef status = HAL_UART_Transmit_DMA(
         config_.tamagawa_uart,
         tamagawa_tx_buffer_,
         1
     );
     
     if (status != HAL_OK) {
-        // Abort receive if transmit fails
         HAL_UART_AbortReceive(config_.tamagawa_uart);
         tamagawa_dma_active_ = false;
+        tamagawa_waiting_for_rx_ = false;
         tamagawa_error_count_++;
+        tamagawa_set_debug(0x13, data_id, status, HAL_ERROR);
         return false;
     }
     
@@ -1177,15 +1240,18 @@ bool Encoder::tamagawa_send_command_dma(uint8_t data_id) {
 
 bool Encoder::tamagawa_can_run_manual_command() {
     if (mode_ != MODE_UART_ABS_TAMAGAWA || config_.tamagawa_uart == nullptr || axis_ == nullptr) {
+        tamagawa_set_debug(0x40, mode_, HAL_ERROR, HAL_ERROR);
         return false;
     }
 
     // Keep reset commands out of the active control loop path. This is stricter
     // than the protocol requirement but avoids colliding with the 8kHz poller.
     if (axis_->motor_.is_armed_) {
+        tamagawa_set_debug(0x41, 0, HAL_BUSY, HAL_BUSY);
         return false;
     }
 
+    tamagawa_set_debug(0x42, 0, HAL_OK, HAL_OK);
     return true;
 }
 
@@ -1200,15 +1266,31 @@ bool Encoder::tamagawa_send_eeprom_read_transaction(uint8_t address, uint8_t* re
     request[2] = tamagawa_calc_crc(request, 2);
     memset(response, 0, 4);
 
-    if (HAL_UART_Transmit(config_.tamagawa_uart, request, sizeof(request), 10) != HAL_OK) {
+    tamagawa_rx_complete_ = false;
+    HAL_StatusTypeDef rx_status = HAL_UART_Receive_IT(config_.tamagawa_uart, response, 4);
+    if (rx_status != HAL_OK) {
+        tamagawa_set_debug(0x21, address, HAL_OK, rx_status);
         return false;
     }
 
-    if (HAL_UART_Receive(config_.tamagawa_uart, response, 4, tamagawa_timeout_ms_) != HAL_OK) {
+    HAL_StatusTypeDef tx_status = HAL_UART_Transmit(config_.tamagawa_uart, request, sizeof(request), 10);
+    if (tx_status != HAL_OK) {
+        HAL_UART_AbortReceive(config_.tamagawa_uart);
+        tamagawa_set_debug(0x20, address, tx_status, HAL_OK);
         return false;
+    }
+
+    uint32_t start_time = HAL_GetTick();
+    while (!tamagawa_rx_complete_) {
+        if (HAL_GetTick() - start_time > tamagawa_timeout_ms_) {
+            HAL_UART_AbortReceive(config_.tamagawa_uart);
+            tamagawa_set_debug(0x21, address, HAL_OK, HAL_TIMEOUT);
+            return false;
+        }
     }
 
     tamagawa_last_communication_ = HAL_GetTick();
+    tamagawa_set_debug(0x22, address, HAL_OK, HAL_OK);
     return true;
 }
 
@@ -1224,15 +1306,31 @@ bool Encoder::tamagawa_send_eeprom_write_transaction(uint8_t address, uint8_t va
     request[3] = tamagawa_calc_crc(request, 3);
     memset(response, 0, 4);
 
-    if (HAL_UART_Transmit(config_.tamagawa_uart, request, sizeof(request), 10) != HAL_OK) {
+    tamagawa_rx_complete_ = false;
+    HAL_StatusTypeDef rx_status = HAL_UART_Receive_IT(config_.tamagawa_uart, response, 4);
+    if (rx_status != HAL_OK) {
+        tamagawa_set_debug(0x31, address, HAL_OK, rx_status);
         return false;
     }
 
-    if (HAL_UART_Receive(config_.tamagawa_uart, response, 4, tamagawa_timeout_ms_) != HAL_OK) {
+    HAL_StatusTypeDef tx_status = HAL_UART_Transmit(config_.tamagawa_uart, request, sizeof(request), 10);
+    if (tx_status != HAL_OK) {
+        HAL_UART_AbortReceive(config_.tamagawa_uart);
+        tamagawa_set_debug(0x30, address, tx_status, HAL_OK);
         return false;
+    }
+
+    uint32_t start_time = HAL_GetTick();
+    while (!tamagawa_rx_complete_) {
+        if (HAL_GetTick() - start_time > tamagawa_timeout_ms_) {
+            HAL_UART_AbortReceive(config_.tamagawa_uart);
+            tamagawa_set_debug(0x31, address, HAL_OK, HAL_TIMEOUT);
+            return false;
+        }
     }
 
     tamagawa_last_communication_ = HAL_GetTick();
+    tamagawa_set_debug(0x32, address, HAL_OK, HAL_OK);
     return true;
 }
 
@@ -1300,8 +1398,9 @@ bool Encoder::tamagawa_validate_response(uint8_t* data, uint8_t data_id, bool al
         return false;
     }
 
-    const uint8_t received_crc = data[TAMAGAWA_RESP_FRAME_SIZE - 1];
-    const uint8_t calculated_crc = tamagawa_calc_crc(data, TAMAGAWA_RESP_FRAME_SIZE - 1);
+    const size_t response_len = tamagawa_get_response_frame_size(data_id);
+    const uint8_t received_crc = data[response_len - 1];
+    const uint8_t calculated_crc = tamagawa_calc_crc(data, response_len - 1);
     if (received_crc != calculated_crc) {
         return false;
     }
@@ -1323,15 +1422,26 @@ bool Encoder::tamagawa_send_blocking_transaction(uint8_t data_id, uint8_t* respo
         return false;
     }
 
-    memset(response, 0, TAMAGAWA_RESP_FRAME_SIZE);
+    const size_t response_len = tamagawa_get_response_frame_size(data_id);
+    memset(response, 0, response_len);
     tamagawa_tx_buffer_[0] = tamagawa_build_cf(data_id);
 
-    if (HAL_UART_Transmit(config_.tamagawa_uart, tamagawa_tx_buffer_, 1, 10) != HAL_OK) {
+    tamagawa_rx_complete_ = false;
+    if (HAL_UART_Receive_IT(config_.tamagawa_uart, response, response_len) != HAL_OK) {
         return false;
     }
 
-    if (HAL_UART_Receive(config_.tamagawa_uart, response, TAMAGAWA_RESP_FRAME_SIZE, tamagawa_timeout_ms_) != HAL_OK) {
+    if (HAL_UART_Transmit(config_.tamagawa_uart, tamagawa_tx_buffer_, 1, 10) != HAL_OK) {
+        HAL_UART_AbortReceive(config_.tamagawa_uart);
         return false;
+    }
+
+    uint32_t start_time = HAL_GetTick();
+    while (!tamagawa_rx_complete_) {
+        if (HAL_GetTick() - start_time > tamagawa_timeout_ms_) {
+            HAL_UART_AbortReceive(config_.tamagawa_uart);
+            return false;
+        }
     }
 
     tamagawa_last_data_id_ = data_id;
@@ -1357,10 +1467,11 @@ bool Encoder::tamagawa_execute_reset_sequence(uint8_t data_id) {
     HAL_UART_AbortTransmit(config_.tamagawa_uart);
     HAL_UART_AbortReceive(config_.tamagawa_uart);
     tamagawa_dma_active_ = false;
+    tamagawa_waiting_for_rx_ = false;
     tamagawa_rx_complete_ = false;
     tamagawa_tx_complete_ = false;
 
-    uint8_t response[TAMAGAWA_RESP_FRAME_SIZE];
+    uint8_t response[TAMAGAWA_MAX_RESP_FRAME_SIZE];
     bool success = true;
 
     for (uint8_t i = 0; i < TAMAGAWA_RESET_REPEAT_COUNT; ++i) {
@@ -1376,7 +1487,7 @@ bool Encoder::tamagawa_execute_reset_sequence(uint8_t data_id) {
     }
 
     if (success) {
-        uint8_t full_data_response[TAMAGAWA_RESP_FRAME_SIZE];
+        uint8_t full_data_response[TAMAGAWA_MAX_RESP_FRAME_SIZE];
         if (!tamagawa_send_blocking_transaction(TAMAGAWA_DATA_ID_FULL, full_data_response)
                 || !tamagawa_decode_position(full_data_response)) {
             success = false;
@@ -1407,6 +1518,7 @@ bool Encoder::tamagawa_check_timeout() {
         HAL_UART_AbortTransmit(config_.tamagawa_uart);
         HAL_UART_AbortReceive(config_.tamagawa_uart);
         tamagawa_dma_active_ = false;
+        tamagawa_waiting_for_rx_ = false;
         tamagawa_error_count_++;
         return true;
     }
@@ -1419,21 +1531,31 @@ bool Encoder::tamagawa_decode_position(uint8_t* data) {
         return false;
     }
 
+    const size_t response_len = tamagawa_get_response_frame_size(tamagawa_last_data_id_);
+    const size_t capture_len = std::min(response_len + 1, sizeof(tamagawa_rx_buffer_));
     const uint8_t expected_cf = tamagawa_build_cf(tamagawa_last_data_id_);
-    if (data[0] != expected_cf) {
-        return false;
+
+    const uint8_t* frame = nullptr;
+    for (size_t offset = 0; offset + response_len <= capture_len; ++offset) {
+        const uint8_t* candidate = data + offset;
+        if (candidate[0] != expected_cf) {
+            continue;
+        }
+
+        const uint8_t received_crc = candidate[response_len - 1];
+        const uint8_t calculated_crc = tamagawa_calc_crc((uint8_t*)candidate, response_len - 1);
+        if (received_crc == calculated_crc) {
+            frame = candidate;
+            break;
+        }
     }
-    
-    // Verify CRC
-    uint8_t received_crc = data[TAMAGAWA_RESP_FRAME_SIZE - 1]; // Last byte is CRC
-    uint8_t calculated_crc = tamagawa_calc_crc(data, TAMAGAWA_RESP_FRAME_SIZE - 1);
-    
-    if (received_crc != calculated_crc) {
+
+    if (frame == nullptr) {
         return false;
     }
     
     // Store status field
-    tamagawa_status_ = data[1]; // SF
+    tamagawa_status_ = frame[1]; // SF
     
     // Communication alarms indicate that the encoder fell back to an error reply;
     // the host must discard this frame and retry.
@@ -1442,11 +1564,11 @@ bool Encoder::tamagawa_decode_position(uint8_t* data) {
     }
 
     const uint32_t single_turn =
-            (uint32_t)data[2]
-            | ((uint32_t)data[3] << 8)
-            | (((uint32_t)data[4] & 0x01) << 16);
+            (uint32_t)frame[2]
+            | ((uint32_t)frame[3] << 8)
+            | (((uint32_t)frame[4] & 0x01) << 16);
 
-    if (data[4] & 0xFE) {
+    if (frame[4] & 0xFE) {
         return false;
     }
 
@@ -1459,14 +1581,14 @@ bool Encoder::tamagawa_decode_position(uint8_t* data) {
             break;
 
         case TAMAGAWA_DATA_ID_FULL:
-            enid = data[5];
+            enid = frame[5];
             multi_turn =
-                    (uint32_t)data[6]
-                    | ((uint32_t)data[7] << 8)
-                    | (((uint32_t)data[8] & 0x01) << 16);
-            almc = data[9];
+                    (uint32_t)frame[6]
+                    | ((uint32_t)frame[7] << 8)
+                    | (((uint32_t)frame[8] & 0x01) << 16);
+            almc = frame[9];
 
-            if (data[8] & 0xFE) {
+            if (frame[8] & 0xFE) {
                 return false;
             }
 
@@ -1522,38 +1644,46 @@ bool Encoder::tamagawa_check_error(uint8_t sts) {
 }
 
 extern "C" void tamagawa_uart_tx_complete_callback(UART_HandleTypeDef *huart) {
-    // Find which encoder uses this UART handle
+    // Update all encoders that use this UART handle.
     for (int i = 0; i < AXIS_COUNT; i++) {
-        if (encoders[i].config_.tamagawa_uart == huart) {
-            // Transmit complete, mark as done
+        if (encoders[i].mode_ == Encoder::MODE_UART_ABS_TAMAGAWA
+                && encoders[i].config_.tamagawa_uart == huart) {
             encoders[i].tamagawa_tx_complete_ = true;
-            break;
+            encoders[i].tamagawa_waiting_for_rx_ = false; // RX was already armed before TX
+            tamagawa_set_debug(0x70, (uint8_t)i, HAL_OK, HAL_OK);
         }
     }
 }
 
 extern "C" void tamagawa_uart_rx_complete_callback(UART_HandleTypeDef *huart) {
-    // Find which encoder uses this UART handle
+    // Update all encoders that use this UART handle.
     for (int i = 0; i < AXIS_COUNT; i++) {
-        if (encoders[i].config_.tamagawa_uart == huart) {
-            // Receive complete, mark as done
+        if (encoders[i].mode_ == Encoder::MODE_UART_ABS_TAMAGAWA
+                && encoders[i].config_.tamagawa_uart == huart) {
             encoders[i].tamagawa_rx_complete_ = true;
             encoders[i].tamagawa_dma_active_ = false;
-            break;
+            encoders[i].tamagawa_waiting_for_rx_ = false;
+            tamagawa_set_debug(0x71, (uint8_t)i, HAL_OK, HAL_OK);
         }
     }
 }
 
 extern "C" void tamagawa_uart_error_callback(UART_HandleTypeDef *huart) {
-    // Find which encoder uses this UART handle
+    bool has_matching_encoder = false;
     for (int i = 0; i < AXIS_COUNT; i++) {
-        if (encoders[i].config_.tamagawa_uart == huart) {
-            // Error occurred, abort transfers and mark as complete
-            HAL_UART_AbortTransmit(huart);
-            HAL_UART_AbortReceive(huart);
+        if (encoders[i].mode_ == Encoder::MODE_UART_ABS_TAMAGAWA
+                && encoders[i].config_.tamagawa_uart == huart) {
+            has_matching_encoder = true;
             encoders[i].tamagawa_dma_active_ = false;
+            encoders[i].tamagawa_waiting_for_rx_ = false;
             encoders[i].tamagawa_error_count_++;
-            break;
         }
+    }
+
+    if (has_matching_encoder) {
+        HAL_UART_AbortTransmit(huart);
+        HAL_UART_AbortReceive(huart);
+        // info: low byte of HAL UART ErrorCode (PE/NE/FE/ORE/DMA)
+        tamagawa_set_debug(0x72, (uint8_t)(huart->ErrorCode & 0xFF), HAL_ERROR, HAL_ERROR);
     }
 }

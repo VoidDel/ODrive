@@ -30,7 +30,10 @@ public:
     static constexpr uint8_t TAMAGAWA_TEMPERATURE_PAGE = 7;
     static constexpr uint8_t TAMAGAWA_TEMPERATURE_ADDRESS = 5;
     static constexpr size_t TAMAGAWA_MAX_TX_FRAME_SIZE = 4;
-    static constexpr size_t TAMAGAWA_RESP_FRAME_SIZE = 11;
+    static constexpr size_t TAMAGAWA_RESP_FRAME_SIZE_ABS = 6;
+    static constexpr size_t TAMAGAWA_RESP_FRAME_SIZE_FULL = 11;
+    static constexpr size_t TAMAGAWA_MAX_RESP_FRAME_SIZE = TAMAGAWA_RESP_FRAME_SIZE_FULL;
+    static constexpr uint32_t TAMAGAWA_POLL_INTERVAL_US = 1000; // Temporary 1kHz poll for half-duplex link validation
     static constexpr uint8_t TAMAGAWA_RESET_REPEAT_COUNT = 10;
     static constexpr uint32_t TAMAGAWA_RESET_MIN_SPACING_US = 40;
     static constexpr uint32_t TAMAGAWA_EEPROM_WRITE_DELAY_MS = 20;
@@ -68,7 +71,7 @@ public:
         // Tamagawa encoder configuration
         UART_HandleTypeDef* tamagawa_uart = nullptr; // UART handle for Tamagawa communication
         Stm32Gpio tamagawa_de_re_gpio; // GPIO for RS485 DE/RE direction control
-        uint8_t tamagawa_data_id = TAMAGAWA_DATA_ID_FULL; // Polling supports ABS-only (0x0) or full-data (0x3)
+        uint8_t tamagawa_data_id = TAMAGAWA_DATA_ID_ABS; // Polling supports ABS-only (0x0) or full-data (0x3)
 
 
         // custom setters
@@ -193,17 +196,20 @@ public:
     bool tamagawa_can_run_manual_command();
     uint8_t tamagawa_calc_crc(uint8_t* data, size_t len);
     uint8_t tamagawa_build_cf(uint8_t data_id);
+    size_t tamagawa_get_response_frame_size(uint8_t data_id);
     bool tamagawa_data_id_supported_for_polling(uint8_t data_id);
     bool tamagawa_check_error(uint8_t sts);
     bool tamagawa_check_timeout();
     
     // Tamagawa encoder state
-    uint8_t tamagawa_rx_buffer_[12]; // Buffer for receiving data (CF+SF+DF0-DF7+CRC = 11 bytes, plus margin)
+    uint8_t tamagawa_rx_buffer_[TAMAGAWA_MAX_RESP_FRAME_SIZE + 1]; // +1 margin
     uint8_t tamagawa_tx_buffer_[TAMAGAWA_MAX_TX_FRAME_SIZE];
     volatile bool tamagawa_rx_complete_ = false;
     volatile bool tamagawa_tx_complete_ = false;
     volatile bool tamagawa_dma_active_ = false; // DMA transfer in progress
+    volatile bool tamagawa_waiting_for_rx_ = false; // TX done, waiting to arm RX DMA
     volatile bool tamagawa_manual_transaction_active_ = false;
+    uint32_t tamagawa_last_poll_us_ = 0;
     uint32_t tamagawa_last_communication_ = 0;
     uint32_t tamagawa_timeout_ms_ = 2; // Timeout in ms (default 2ms, should be much faster)
     uint8_t tamagawa_last_data_id_ = TAMAGAWA_DATA_ID_FULL;
