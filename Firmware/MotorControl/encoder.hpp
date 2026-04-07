@@ -192,6 +192,10 @@ public:
     bool tamagawa_parse_eeprom_response(uint8_t expected_data_id, uint8_t expected_address, uint8_t* response, uint8_t* value, bool* busy);
     bool tamagawa_select_eeprom_page(uint8_t page);
     bool tamagawa_wait_for_eeprom_write_cycle();
+    void tamagawa_flush_rx();
+    size_t tamagawa_receive_bytes_blocking(uint8_t* buffer, size_t max_len, uint32_t timeout_us);
+    const uint8_t* tamagawa_find_response_frame(const uint8_t* data, size_t capture_len, uint8_t data_id, size_t response_len);
+    bool tamagawa_send_blocking_request(uint8_t* request, size_t request_len, uint8_t expected_data_id, uint8_t* response, size_t response_len);
     bool tamagawa_validate_response(uint8_t* data, uint8_t data_id, bool allow_encoder_error_bits);
     bool tamagawa_can_run_manual_command();
     uint8_t tamagawa_calc_crc(uint8_t* data, size_t len);
