@@ -5,7 +5,9 @@
 BUILD_DIR = build
 FIRMWARE = $(BUILD_DIR)/ODriveFirmware.elf
 FIRMWARE_HEX = $(BUILD_DIR)/ODriveFirmware.hex
-PROGRAMMER_CMD=$(if $(value PROGRAMMER),-c 'hla_serial $(PROGRAMMER)',)
+STLINK_PROGRAMMER_CMD=$(if $(value PROGRAMMER),-c 'hla_serial $(PROGRAMMER)',)
+CMSIS_DAP_PROGRAMMER_CMD=$(if $(value PROGRAMMER),-c 'cmsis_dap_serial $(PROGRAMMER)',)
+PROGRAMMER_CMD=$(STLINK_PROGRAMMER_CMD)
 
 include tup.config # source build configuration to get CONFIG_BOARD_VERSION
 
@@ -18,9 +20,13 @@ endif
 ifneq (,$(findstring v3.,$(CONFIG_BOARD_VERSION)))
   OPENOCD := openocd -f interface/stlink-v2.cfg $(PROGRAMMER_CMD) -f target/stm32f4x.cfg -c init
   GDB := arm-none-eabi-gdb --ex 'target extended-remote | openocd -f "interface/stlink-v2.cfg" -f "target/stm32f4x.cfg" -c "gdb_port pipe; log_output openocd.log"' --ex 'monitor reset halt'
+  CMSIS_DAP_OPENOCD := openocd -f interface/cmsis-dap.cfg $(CMSIS_DAP_PROGRAMMER_CMD) -c 'transport select swd' -c 'gdb port disabled' -f target/stm32f4x.cfg -c 'reset_config srst_only' -c init -c halt
+  CMSIS_DAP_GDB := arm-none-eabi-gdb --ex 'target extended-remote | openocd -f "interface/cmsis-dap.cfg" -c "transport select swd" -f "target/stm32f4x.cfg" -c "gdb_port pipe; log_output openocd.log"' --ex 'monitor reset halt'
 else ifneq (,$(findstring v4.,$(CONFIG_BOARD_VERSION)))
   OPENOCD := openocd -f interface/stlink.cfg $(PROGRAMMER_CMD) -f target/stm32f7x.cfg -c 'reset_config none separate' -c init
   GDB := arm-none-eabi-gdb --ex 'target extended-remote | openocd -f "interface/stlink-v2.cfg" -f "target/stm32f7x.cfg" -c "reset_config none separate" -c "gdb_port pipe; log_output openocd.log"' --ex 'monitor reset halt'
+  CMSIS_DAP_OPENOCD := openocd -f interface/cmsis-dap.cfg $(CMSIS_DAP_PROGRAMMER_CMD) -c 'transport select swd' -c 'gdb port disabled' -f target/stm32f7x.cfg -c 'reset_config srst_only' -c init -c halt
+  CMSIS_DAP_GDB := arm-none-eabi-gdb --ex 'target extended-remote | openocd -f "interface/cmsis-dap.cfg" -c "transport select swd" -f "target/stm32f7x.cfg" -c "reset_config none separate" -c "gdb_port pipe; log_output openocd.log"' --ex 'monitor reset halt'
 else
   $(error unknown board version)
 endif
@@ -81,6 +87,23 @@ erase-stlink2:
 unlock-stlink2:
 	$(OPENOCD) -c 'reset halt' -c 'stm32f2x unlock 0'
 
+flash-cmsis-dap: all
+	$(CMSIS_DAP_OPENOCD) \
+		-c 'reset halt' \
+		-c 'flash write_image erase $(FIRMWARE)' \
+		-c exit
+
+gdb-cmsis-dap:
+	$(CMSIS_DAP_GDB) $(FIRMWARE)
+
+# Erase entire STM32 using CMSIS-DAP
+erase-cmsis-dap:
+	$(CMSIS_DAP_OPENOCD) -c 'reset halt' -c 'flash erase_sector 0 0 last' -c exit
+
+# Sometimes the STM32 will get it's protection bits set for unknown reasons. Unlock it with this command
+unlock-cmsis-dap:
+	$(CMSIS_DAP_OPENOCD) -c 'reset halt' -c 'stm32f2x unlock 0'
+
 flash-bmp: all
 	arm-none-eabi-gdb --ex 'target extended-remote $(BMP_PORT)' \
 		--ex 'monitor swdp_scan' \
@@ -105,5 +128,6 @@ erase: erase-stlink2
 unlock: unlock-stlink2
 
 .PHONY: stlink2-config flash-stlink2 gdb-stlink2 erase-stlink2 unlock-stlink2
+.PHONY: flash-cmsis-dap gdb-cmsis-dap erase-cmsis-dap unlock-cmsis-dap
 .PHONY: flash-bmp gdb-bmp
 .PHONY: all clean flash gdb erase unlock dfu fibre
