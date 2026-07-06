@@ -36,6 +36,8 @@ UART_HandleTypeDef* uart_a = &huart4;
 UART_HandleTypeDef* uart_b = &huart2; // TODO: this could be supported in ODrive v3.6 (or similar) using STM32's USART2
 UART_HandleTypeDef* uart_c = nullptr;
 static constexpr uint32_t kTamagawaBaudrate = 2500000;
+static constexpr int32_t kDefaultIncrementalEncoderCpr = 2048 * 4;
+static constexpr int32_t kTamagawaSingleTurnCpr = 131072;
 
 Drv8301 m0_gate_driver{
     &spi3_arbiter,
@@ -120,7 +122,16 @@ void configure_tamagawa_encoders() {
     // Set UART handles for Tamagawa encoders
     encoders[0].config_.tamagawa_uart = uart_a; // UART4
     encoders[1].config_.tamagawa_uart = uart_b; // USART2
-    
+
+    if (encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA
+            && encoders[0].config_.cpr == kDefaultIncrementalEncoderCpr) {
+        encoders[0].config_.cpr = kTamagawaSingleTurnCpr;
+    }
+    if (encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA
+            && encoders[1].config_.cpr == kDefaultIncrementalEncoderCpr) {
+        encoders[1].config_.cpr = kTamagawaSingleTurnCpr;
+    }
+
     // DE/RE control is handled by hardware auto-direction circuit
     // No GPIO configuration needed
 }
