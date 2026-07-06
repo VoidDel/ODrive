@@ -994,6 +994,7 @@ bool Encoder::update() {
             // Calculate position delta (only if we have new data)
             if (tamagawa_rx_complete_) {
                 tamagawa_rx_complete_ = false;
+                pos_abs_latched = pos_abs_; // use the freshly decoded Tamagawa position
                 delta_enc = pos_abs_latched - count_in_cpr_; //LATCH
                 delta_enc = mod(delta_enc, config_.cpr);
                 if (delta_enc > config_.cpr/2) {
