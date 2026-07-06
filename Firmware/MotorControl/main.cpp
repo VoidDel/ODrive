@@ -686,20 +686,14 @@ extern "C" int main(void) {
         for (;;); // TODO: handle properly
     }
 
+    const bool axis0_uses_tamagawa = encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+    const bool axis1_uses_tamagawa = encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
     const bool uart_a_required_by_tamagawa =
-            encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+            (axis0_uses_tamagawa && encoders[0].config_.tamagawa_uart == uart_a)
+            || (axis1_uses_tamagawa && encoders[1].config_.tamagawa_uart == uart_a);
     const bool uart_b_required_by_tamagawa =
-            encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
-
-    // Reserve GPIOs for Tamagawa encoders regardless of generic UART host settings.
-    if (uart_a_required_by_tamagawa) {
-        odrv.config_.gpio_modes[1] = ODriveIntf::GPIO_MODE_UART_A; // GPIO1 / PA0
-        odrv.config_.gpio_modes[2] = ODriveIntf::GPIO_MODE_UART_A; // GPIO2 / PA1
-    }
-    if (uart_b_required_by_tamagawa) {
-        odrv.config_.gpio_modes[3] = ODriveIntf::GPIO_MODE_UART_B; // GPIO3 / PA2
-        odrv.config_.gpio_modes[4] = ODriveIntf::GPIO_MODE_UART_B; // GPIO4 / PA3
-    }
+            (axis0_uses_tamagawa && encoders[0].config_.tamagawa_uart == uart_b)
+            || (axis1_uses_tamagawa && encoders[1].config_.tamagawa_uart == uart_b);
 
     // Init GPIOs according to their configured mode
     for (size_t i = 0; i < GPIO_COUNT; ++i) {
@@ -709,6 +703,14 @@ extern "C" int main(void) {
         }
 
         ODriveIntf::GpioMode mode = odrv.config_.gpio_modes[i];
+
+        // Tamagawa encoders use the board UART pins as dedicated RS485 pins.
+        // Force the runtime pin mode without modifying the saved user GPIO config.
+        if (uart_a_required_by_tamagawa && (i == 1 || i == 2)) {
+            mode = ODriveIntf::GPIO_MODE_UART_A; // GPIO1/2: UART4 TX/RX
+        } else if (uart_b_required_by_tamagawa && (i == 3 || i == 4)) {
+            mode = ODriveIntf::GPIO_MODE_UART_B; // GPIO3/4: USART2 TX/RX
+        }
 
         GPIO_InitTypeDef GPIO_InitStruct;
         GPIO_InitStruct.Pin = get_gpio(i).pin_mask_;
