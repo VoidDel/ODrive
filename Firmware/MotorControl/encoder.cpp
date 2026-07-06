@@ -956,12 +956,8 @@ bool Encoder::update() {
                     }
 
                     if (!tamagawa_rx_complete_) {
-                        // A transaction is in-flight but data is still incomplete.
-                        spi_error_rate_ += current_meas_period * (1.0f - spi_error_rate_);
-                        if (spi_error_rate_ > 0.05f) {
-                            set_error(ERROR_ABS_SPI_COM_FAIL);
-                            return false;
-                        }
+                        // A transaction is in-flight but has not timed out yet.
+                        // Do not count normal UART/DMA latency as a communication error.
                     }
                 }
 
@@ -973,10 +969,7 @@ bool Encoder::update() {
                 // DMA completed successfully
                 tamagawa_dma_active_ = false;
                 tamagawa_waiting_for_rx_ = false;
-                
-                // Low pass filter the error (success)
-                spi_error_rate_ += current_meas_period * (0.0f - spi_error_rate_);
-                
+
                 // Decode position from received data
                 if (!tamagawa_decode_position(tamagawa_rx_buffer_)) {
                     // Decode failed
@@ -990,6 +983,7 @@ bool Encoder::update() {
                     // Successful frame decode means the UART/Tamagawa link is
                     // alive, so clear stale communication faults that may have
                     // latched during earlier bring-up attempts.
+                    spi_error_rate_ += current_meas_period * (0.0f - spi_error_rate_);
                     error_ = (Error)(error_ & ~(ERROR_ABS_SPI_COM_FAIL | ERROR_ABS_SPI_TIMEOUT));
                     if (error_ == ERROR_NONE) {
                         axis_->error_ = (Axis::Error)(axis_->error_ & ~Axis::ERROR_ENCODER_FAILED);
@@ -1359,11 +1353,9 @@ bool Encoder::tamagawa_send_command_dma(uint8_t data_id) {
     tamagawa_waiting_for_rx_ = true;
     
     const size_t response_len = tamagawa_get_response_frame_size(data_id);
-    const size_t rx_len = std::min(response_len + 1, sizeof(tamagawa_rx_buffer_));
+    const size_t rx_len = std::min(response_len, sizeof(tamagawa_rx_buffer_));
 
     // Arm RX DMA before TX to avoid missing fast responses at 2.5Mbps.
-    // Some RS485 transceivers echo the TX CF byte onto RX, so capture one
-    // extra byte and let the decoder realign using CF+CRC.
     HAL_StatusTypeDef rx_status = HAL_UART_Receive_DMA(
         config_.tamagawa_uart,
         tamagawa_rx_buffer_,
