@@ -1294,6 +1294,42 @@ interfaces:
       pos_abs:
         type: int32
         doc: The last (valid) position from an absolute encoder, if used.
+      tamagawa_status:
+        type: readonly uint8
+        c_getter: tamagawa_status_
+        doc: Last Tamagawa encoder status byte (STS) received from the encoder.
+      tamagawa_alarm_code:
+        type: readonly uint8
+        c_getter: tamagawa_almc_
+        doc: Last Tamagawa encoder alarm code (ALMC) received from the encoder.
+      tamagawa_encoder_id:
+        type: readonly uint8
+        c_getter: tamagawa_enid_
+        doc: Tamagawa encoder ID (ENID) reported by the encoder.
+      tamagawa_eeprom_page:
+        type: readonly uint8
+        c_getter: tamagawa_eeprom_page_
+        doc: Currently selected Tamagawa EEPROM page.
+      tamagawa_multi_turn:
+        type: readonly uint32
+        c_getter: tamagawa_multi_turn_
+        doc: Raw Tamagawa multi-turn counter value from the encoder.
+      tamagawa_error_count:
+        type: readonly uint32
+        c_getter: tamagawa_error_count_
+        doc: Number of Tamagawa communication or validation errors observed by the firmware.
+      tamagawa_last_data_id:
+        type: readonly uint8
+        c_getter: tamagawa_last_data_id_
+        doc: Last Tamagawa Data ID used for polling or manual command.
+      tamagawa_last_communication:
+        type: readonly uint32
+        c_getter: tamagawa_last_communication_
+        doc: Timestamp of the last Tamagawa communication event in firmware ticks.
+      tamagawa_timeout_ms:
+        type: readonly uint32
+        c_getter: tamagawa_timeout_ms_
+        doc: Tamagawa response timeout in milliseconds.
       spi_error_rate: readonly float32
       config:
         c_is_class: False
