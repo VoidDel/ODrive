@@ -35,6 +35,9 @@ Stm32SpiArbiter& ext_spi_arbiter = spi3_arbiter;
 UART_HandleTypeDef* uart_a = &huart4;
 UART_HandleTypeDef* uart_b = &huart2; // TODO: this could be supported in ODrive v3.6 (or similar) using STM32's USART2
 UART_HandleTypeDef* uart_c = nullptr;
+static constexpr uint32_t kTamagawaBaudrate = 2500000;
+static constexpr int32_t kDefaultIncrementalEncoderCpr = 2048 * 4;
+static constexpr int32_t kTamagawaSingleTurnCpr = 131072;
 
 Drv8301 m0_gate_driver{
     &spi3_arbiter,
@@ -111,6 +114,27 @@ Encoder encoders[AXIS_COUNT] = {
         &spi3_arbiter // spi_arbiter
     }
 };
+
+// Configure Tamagawa encoder UART interfaces
+// Axis 0: UART4 (PA0/PA1) for Tamagawa encoder
+// Axis 1: USART2 (PA2/PA3) for Tamagawa encoder
+void configure_tamagawa_encoders() {
+    // Set UART handles for Tamagawa encoders
+    encoders[0].config_.tamagawa_uart = uart_a; // UART4
+    encoders[1].config_.tamagawa_uart = uart_b; // USART2
+
+    if (encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA
+            && encoders[0].config_.cpr == kDefaultIncrementalEncoderCpr) {
+        encoders[0].config_.cpr = kTamagawaSingleTurnCpr;
+    }
+    if (encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA
+            && encoders[1].config_.cpr == kDefaultIncrementalEncoderCpr) {
+        encoders[1].config_.cpr = kTamagawaSingleTurnCpr;
+    }
+
+    // DE/RE control is handled by hardware auto-direction circuit
+    // No GPIO configuration needed
+}
 
 // TODO: this has no hardware dependency and should be allocated depending on config
 Endstop endstops[2 * AXIS_COUNT];
@@ -327,13 +351,26 @@ bool board_init() {
     HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
 
-    if (odrv.config_.enable_uart_a) {
-        uart_a->Init.BaudRate = odrv.config_.uart_a_baudrate;
+    configure_tamagawa_encoders();
+
+    const bool axis0_uses_tamagawa = encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+    const bool axis1_uses_tamagawa = encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+    const bool uart_a_used_by_tamagawa =
+            (axis0_uses_tamagawa && encoders[0].config_.tamagawa_uart == uart_a)
+            || (axis1_uses_tamagawa && encoders[1].config_.tamagawa_uart == uart_a);
+    const bool uart_b_used_by_tamagawa =
+            (axis0_uses_tamagawa && encoders[0].config_.tamagawa_uart == uart_b)
+            || (axis1_uses_tamagawa && encoders[1].config_.tamagawa_uart == uart_b);
+    const bool uart_a_should_be_initialized = odrv.config_.enable_uart_a || uart_a_used_by_tamagawa;
+    const bool uart_b_should_be_initialized = odrv.config_.enable_uart_b || uart_b_used_by_tamagawa;
+
+    if (uart_a_should_be_initialized) {
+        uart_a->Init.BaudRate = uart_a_used_by_tamagawa ? kTamagawaBaudrate : odrv.config_.uart_a_baudrate;
         MX_UART4_Init();
     }
 
-    if (odrv.config_.enable_uart_b) {
-        uart_b->Init.BaudRate = odrv.config_.uart_b_baudrate;
+    if (uart_b_should_be_initialized) {
+        uart_b->Init.BaudRate = uart_b_used_by_tamagawa ? kTamagawaBaudrate : odrv.config_.uart_b_baudrate;
         MX_USART2_UART_Init();
     }
 

@@ -534,7 +534,8 @@ static void rtos_main(void*) {
 
     // Set up the CS pins for absolute encoders (TODO: move to GPIO init switch statement)
     for(auto& axis : axes){
-        if(axis.encoder_.config_.mode & Encoder::MODE_FLAG_ABS){
+        if ((axis.encoder_.config_.mode & Encoder::MODE_FLAG_ABS)
+                && axis.encoder_.config_.mode != Encoder::MODE_UART_ABS_TAMAGAWA) {
             axis.encoder_.abs_spi_cs_pin_init();
         }
     }
@@ -685,6 +686,15 @@ extern "C" int main(void) {
         for (;;); // TODO: handle properly
     }
 
+    const bool axis0_uses_tamagawa = encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+    const bool axis1_uses_tamagawa = encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+    const bool uart_a_required_by_tamagawa =
+            (axis0_uses_tamagawa && encoders[0].config_.tamagawa_uart == uart_a)
+            || (axis1_uses_tamagawa && encoders[1].config_.tamagawa_uart == uart_a);
+    const bool uart_b_required_by_tamagawa =
+            (axis0_uses_tamagawa && encoders[0].config_.tamagawa_uart == uart_b)
+            || (axis1_uses_tamagawa && encoders[1].config_.tamagawa_uart == uart_b);
+
     // Init GPIOs according to their configured mode
     for (size_t i = 0; i < GPIO_COUNT; ++i) {
         // Skip unavailable GPIOs
@@ -693,6 +703,14 @@ extern "C" int main(void) {
         }
 
         ODriveIntf::GpioMode mode = odrv.config_.gpio_modes[i];
+
+        // Tamagawa encoders use the board UART pins as dedicated RS485 pins.
+        // Force the runtime pin mode without modifying the saved user GPIO config.
+        if (uart_a_required_by_tamagawa && (i == 1 || i == 2)) {
+            mode = ODriveIntf::GPIO_MODE_UART_A; // GPIO1/2: UART4 TX/RX
+        } else if (uart_b_required_by_tamagawa && (i == 3 || i == 4)) {
+            mode = ODriveIntf::GPIO_MODE_UART_B; // GPIO3/4: USART2 TX/RX
+        }
 
         GPIO_InitTypeDef GPIO_InitStruct;
         GPIO_InitStruct.Pin = get_gpio(i).pin_mask_;
@@ -741,7 +759,7 @@ extern "C" int main(void) {
                 GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
                 GPIO_InitStruct.Pull = (i == 0) ? GPIO_PULLDOWN : GPIO_PULLUP; // this is probably swapped but imitates old behavior
                 GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-                if (!odrv.config_.enable_uart_a) {
+                if (!odrv.config_.enable_uart_a && !uart_a_required_by_tamagawa) {
                     odrv.misconfigured_ = true;
                 }
             } break;
@@ -749,7 +767,7 @@ extern "C" int main(void) {
                 GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
                 GPIO_InitStruct.Pull = (i == 0) ? GPIO_PULLDOWN : GPIO_PULLUP; // this is probably swapped but imitates old behavior
                 GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-                if (!odrv.config_.enable_uart_b) {
+                if (!odrv.config_.enable_uart_b && !uart_b_required_by_tamagawa) {
                     odrv.misconfigured_ = true;
                 }
             } break;

@@ -116,6 +116,10 @@ AsciiProtocol ascii_over_uart(&uart_rx_stream, &uart_tx_multiplexer);
 
 bool uart0_stdout_pending = false;
 
+extern "C" void tamagawa_uart_tx_complete_callback(UART_HandleTypeDef *huart);
+extern "C" void tamagawa_uart_rx_complete_callback(UART_HandleTypeDef *huart);
+extern "C" void tamagawa_uart_error_callback(UART_HandleTypeDef *huart);
+
 static void uart_server_thread(void * ctx) {
     (void) ctx;
 
@@ -200,7 +204,17 @@ void uart_poll() {
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart) {
+    tamagawa_uart_tx_complete_callback(huart);
+
     if (huart == huart_) {
         osMessagePut(uart_event_queue, 2, 0);
     }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart) {
+    tamagawa_uart_rx_complete_callback(huart);
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart) {
+    tamagawa_uart_error_callback(huart);
 }
