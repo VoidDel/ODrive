@@ -33,7 +33,7 @@ public:
     static constexpr size_t TAMAGAWA_RESP_FRAME_SIZE_ABS = 6;
     static constexpr size_t TAMAGAWA_RESP_FRAME_SIZE_FULL = 11;
     static constexpr size_t TAMAGAWA_MAX_RESP_FRAME_SIZE = TAMAGAWA_RESP_FRAME_SIZE_FULL;
-    static constexpr uint32_t TAMAGAWA_POLL_INTERVAL_US = 1000; // Temporary 1kHz poll for half-duplex link validation
+    static constexpr uint32_t TAMAGAWA_POLL_INTERVAL_US = 250; // 4kHz ABS-only poll for high-speed Tamagawa phase correction
     static constexpr uint8_t TAMAGAWA_RESET_REPEAT_COUNT = 10;
     static constexpr uint32_t TAMAGAWA_RESET_MIN_SPACING_US = 40;
     static constexpr uint32_t TAMAGAWA_EEPROM_WRITE_DELAY_MS = 20;

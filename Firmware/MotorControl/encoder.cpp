@@ -1059,29 +1059,36 @@ bool Encoder::update() {
     pos_circular_ = pos_circular;
 
     //// run encoder count interpolation
-    int32_t corrected_enc = count_in_cpr_ - config_.phase_offset;
-    // if we are stopped, make sure we don't randomly drift
-    if (snap_to_zero_vel || !config_.enable_phase_interpolation) {
-        interpolation_ = 0.5f;
-    // reset interpolation if encoder edge comes
-    // TODO: This isn't correct. At high velocities the first phase in this count may very well not be at the edge.
-    } else if (delta_enc > 0) {
-        interpolation_ = 0.0f;
-    } else if (delta_enc < 0) {
-        interpolation_ = 1.0f;
+    float phase_pos_counts = 0.0f;
+    if (mode_ == MODE_UART_ABS_TAMAGAWA) {
+        // Tamagawa absolute samples are sparse compared to the control loop.
+        // Use the PLL-predicted CPR position for a continuous FOC phase between ABS frames.
+        phase_pos_counts = pos_cpr_counts_ - (float)config_.phase_offset;
     } else {
-        // Interpolate (predict) between encoder counts using vel_estimate,
-        interpolation_ += current_meas_period * vel_estimate_counts_;
-        // don't allow interpolation indicated position outside of [enc, enc+1)
-        if (interpolation_ > 1.0f) interpolation_ = 1.0f;
-        if (interpolation_ < 0.0f) interpolation_ = 0.0f;
+        int32_t corrected_enc = count_in_cpr_ - config_.phase_offset;
+        // if we are stopped, make sure we don't randomly drift
+        if (snap_to_zero_vel || !config_.enable_phase_interpolation) {
+            interpolation_ = 0.5f;
+        // reset interpolation if encoder edge comes
+        // TODO: This isn't correct. At high velocities the first phase in this count may very well not be at the edge.
+        } else if (delta_enc > 0) {
+            interpolation_ = 0.0f;
+        } else if (delta_enc < 0) {
+            interpolation_ = 1.0f;
+        } else {
+            // Interpolate (predict) between encoder counts using vel_estimate,
+            interpolation_ += current_meas_period * vel_estimate_counts_;
+            // don't allow interpolation indicated position outside of [enc, enc+1)
+            if (interpolation_ > 1.0f) interpolation_ = 1.0f;
+            if (interpolation_ < 0.0f) interpolation_ = 0.0f;
+        }
+        phase_pos_counts = (float)corrected_enc + interpolation_;
     }
-    float interpolated_enc = corrected_enc + interpolation_;
 
     //// compute electrical phase
     //TODO avoid recomputing elec_rad_per_enc every time
     float elec_rad_per_enc = axis_->motor_.config_.pole_pairs * 2 * M_PI * (1.0f / (float)(config_.cpr));
-    float ph = elec_rad_per_enc * (interpolated_enc - config_.phase_offset_float);
+    float ph = elec_rad_per_enc * (phase_pos_counts - config_.phase_offset_float);
     
     if (is_ready_) {
         phase_ = wrap_pm_pi(ph) * config_.direction;
