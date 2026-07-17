@@ -89,6 +89,8 @@ public:
     }
 
 private:
+    static constexpr uint32_t kIgnoredFault = 0x07FF;
+
     enum CtrlMode_e {
         DRV8301_CtrlMode_Read = 1 << 15,   //!< Read Mode
         DRV8301_CtrlMode_Write = 0 << 15   //!< Write Mode
@@ -115,6 +117,9 @@ private:
     /** @brief Reads data from a DRV8301 register */
     bool read_reg(const RegName_e regName, uint16_t* data);
 
+    /** @brief Reads the unfiltered DRV8301 fault registers. */
+    FaultType_e get_raw_error();
+
     /** @brief Writes data to a DRV8301 register. There is no check if the write succeeded. */
     bool write_reg(const RegName_e regName, const uint16_t data);
 
@@ -133,6 +138,8 @@ private:
     // We don't put these buffers on the stack because we place the stack in
     // a RAM section which cannot be used by DMA.
     uint16_t tx_buf_, rx_buf_;
+
+    bool ignored_fault_active_ = false;
 
     enum {
         kStateUninitialized,

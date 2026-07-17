@@ -117,7 +117,26 @@ bool Drv8301::init() {
 }
 
 void Drv8301::do_checks() {
-    if (state_ != kStateUninitialized && !nfault_gpio_.read()) {
+    if (state_ == kStateUninitialized) {
+        return;
+    }
+
+    if (nfault_gpio_.read()) {
+        ignored_fault_active_ = false;
+        return;
+    }
+
+    if (ignored_fault_active_) {
+        return;
+    }
+
+    // Read once when nFAULT first goes low. Keep running only for the known
+    // spurious all-bits-set value; all other faults and communication errors
+    // retain the original shutdown behavior.
+    FaultType_e error = get_raw_error();
+    if (error == (FaultType_e)kIgnoredFault) {
+        ignored_fault_active_ = true;
+    } else {
         state_ = kStateUninitialized;
     }
 }
@@ -127,6 +146,12 @@ bool Drv8301::is_ready() {
 }
 
 Drv8301::FaultType_e Drv8301::get_error() {
+    FaultType_e error = get_raw_error();
+    ignored_fault_active_ = error == (FaultType_e)kIgnoredFault;
+    return ignored_fault_active_ ? FaultType_NoFault : error;
+}
+
+Drv8301::FaultType_e Drv8301::get_raw_error() {
     uint16_t fault1, fault2;
 
     if (!read_reg(kRegNameStatus1, &fault1) ||
