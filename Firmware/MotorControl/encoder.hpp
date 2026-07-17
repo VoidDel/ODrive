@@ -34,6 +34,7 @@ public:
     static constexpr size_t TAMAGAWA_RESP_FRAME_SIZE_FULL = 11;
     static constexpr size_t TAMAGAWA_MAX_RESP_FRAME_SIZE = TAMAGAWA_RESP_FRAME_SIZE_FULL;
     static constexpr uint32_t TAMAGAWA_POLL_INTERVAL_US = 250; // 4kHz ABS-only poll for high-speed Tamagawa phase correction
+    static constexpr int32_t TAMAGAWA_REBASE_INTERVAL_TURNS = 4096;
     static constexpr uint8_t TAMAGAWA_RESET_REPEAT_COUNT = 10;
     static constexpr uint32_t TAMAGAWA_RESET_MIN_SPACING_US = 40;
     static constexpr uint32_t TAMAGAWA_EEPROM_WRITE_DELAY_MS = 20;
@@ -96,6 +97,8 @@ public:
     void set_idx_subscribe(bool override_enable = false);
     void update_pll_gains();
     void check_pre_calibrated();
+    float get_pos_estimate_counts();
+    int64_t get_tamagawa_linear_turn_offset();
 
     void set_linear_count(int32_t count);
     void set_circular_count(int32_t count, bool update_offset);
@@ -204,6 +207,7 @@ public:
     bool tamagawa_data_id_supported_for_polling(uint8_t data_id);
     bool tamagawa_check_error(uint8_t sts);
     bool tamagawa_check_timeout();
+    bool tamagawa_rebase_linear_position(int32_t pending_delta);
     
     // Tamagawa encoder state
     uint8_t tamagawa_rx_buffer_[TAMAGAWA_MAX_RESP_FRAME_SIZE + 1]; // +1 margin
@@ -223,6 +227,9 @@ public:
     uint8_t tamagawa_eeprom_page_ = 0;
     uint32_t tamagawa_multi_turn_ = 0;
     uint32_t tamagawa_error_count_ = 0; // Error counter for debugging
+    int64_t tamagawa_linear_turn_offset_ = 0; // Whole turns removed from the local 32-bit/float PLL coordinates
+    float tamagawa_linear_turn_offset_float_ = 0.0f; // Cached float form for the real-time control path
+    uint32_t tamagawa_rebase_count_ = 0;
 
     constexpr float getCoggingRatio(){
         return 1.0f / 3600.0f;

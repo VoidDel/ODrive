@@ -1251,7 +1251,7 @@ interfaces:
       shadow_count: 
         type: readonly int32
         unit: counts
-        doc: Raw linear count from the encoder.
+        doc: Raw local linear count from the encoder. Tamagawa mode periodically rebases this value to prevent overflow.
       count_in_cpr: 
         type: readonly int32
         unit: counts
@@ -1265,6 +1265,7 @@ interfaces:
         doc: Linear position estimate of the encoder, in turns.  Also known as "multi-turn" position.
       pos_estimate_counts:
         type: readonly float32
+        c_getter: get_pos_estimate_counts()
         unit: counts
         doc: Linear position estimate of the encoder, in counts.  Equal to `pos_estimate * config.cpr`
       pos_circular: 
@@ -1330,6 +1331,15 @@ interfaces:
         type: readonly uint32
         c_getter: tamagawa_timeout_ms_
         doc: Tamagawa response timeout in milliseconds.
+      tamagawa_linear_turn_offset:
+        type: readonly int64
+        c_getter: get_tamagawa_linear_turn_offset()
+        unit: turns
+        doc: Whole turns moved out of the local PLL coordinates to prevent 32-bit position overflow.
+      tamagawa_rebase_count:
+        type: readonly uint32
+        c_getter: tamagawa_rebase_count_
+        doc: Number of successful Tamagawa linear-position rebases since the last linear-count reset.
       spi_error_rate: readonly float32
       config:
         c_is_class: False

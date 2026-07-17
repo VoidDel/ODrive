@@ -1,5 +1,6 @@
 
 #include "odrive_main.h"
+#include "tamagawa_position.hpp"
 #include <Drivers/STM32/stm32_system.h>
 #include <bitset>
 
@@ -185,6 +186,21 @@ void Encoder::check_pre_calibrated() {
     }
 }
 
+float Encoder::get_pos_estimate_counts() {
+    uint32_t prim = cpu_enter_critical();
+    const float result = pos_estimate_counts_
+            + tamagawa_linear_turn_offset_float_ * (float)config_.cpr;
+    cpu_exit_critical(prim);
+    return result;
+}
+
+int64_t Encoder::get_tamagawa_linear_turn_offset() {
+    uint32_t prim = cpu_enter_critical();
+    const int64_t result = tamagawa_linear_turn_offset_;
+    cpu_exit_critical(prim);
+    return result;
+}
+
 // Function that sets the current encoder count to a desired 32-bit value.
 void Encoder::set_linear_count(int32_t count) {
     // Disable interrupts to make a critical section to avoid race condition
@@ -193,12 +209,40 @@ void Encoder::set_linear_count(int32_t count) {
     // Update states
     shadow_count_ = count;
     pos_estimate_counts_ = (float)count;
+    tamagawa_linear_turn_offset_ = 0;
+    tamagawa_linear_turn_offset_float_ = 0.0f;
+    tamagawa_rebase_count_ = 0;
     tim_cnt_sample_ = count;
 
     //Write hardware last
     timer_->Instance->CNT = count;
 
     cpu_exit_critical(prim);
+}
+
+bool Encoder::tamagawa_rebase_linear_position(int32_t pending_delta) {
+    const TamagawaRebaseResult result = rebase_tamagawa_linear_position(
+            config_.cpr,
+            TAMAGAWA_REBASE_INTERVAL_TURNS,
+            pending_delta,
+            shadow_count_,
+            pos_estimate_counts_,
+            tamagawa_linear_turn_offset_);
+
+    if (result == TamagawaRebaseResult::INVALID_STATE) {
+        set_error(ERROR_CPR_POLEPAIRS_MISMATCH);
+        return false;
+    }
+
+    if (result == TamagawaRebaseResult::REBASED) {
+        tamagawa_linear_turn_offset_float_ = (float)tamagawa_linear_turn_offset_;
+        if (!std::isfinite(tamagawa_linear_turn_offset_float_)) {
+            set_error(ERROR_CPR_POLEPAIRS_MISMATCH);
+            return false;
+        }
+        tamagawa_rebase_count_++;
+    }
+    return true;
 }
 
 // Function that sets the CPR circular tracking encoder count to a desired 32-bit value.
@@ -389,7 +433,13 @@ bool Encoder::run_offset_calibration() {
 
     // We use shadow_count_ to do the calibration, but the offset is used by count_in_cpr_
     // Therefore we have to sync them for calibration
-    shadow_count_ = count_in_cpr_;
+    if (mode_ == MODE_UART_ABS_TAMAGAWA) {
+        // Also clear the rebase offset so a calibration requested after long
+        // travel starts from one coherent local coordinate system.
+        set_linear_count(count_in_cpr_);
+    } else {
+        shadow_count_ = count_in_cpr_;
+    }
 
     CRITICAL_SECTION() {
         // Reset state variables
@@ -1009,7 +1059,15 @@ bool Encoder::update() {
         } break;
     }
 
-    shadow_count_ += delta_enc;
+    if (mode_ == MODE_UART_ABS_TAMAGAWA) {
+        if (!tamagawa_rebase_linear_position(delta_enc)) {
+            return false;
+        }
+        // The rebase helper verifies this sum before narrowing it to int32_t.
+        shadow_count_ = (int32_t)((int64_t)shadow_count_ + (int64_t)delta_enc);
+    } else {
+        shadow_count_ += delta_enc;
+    }
     count_in_cpr_ += delta_enc;
     count_in_cpr_ = mod(count_in_cpr_, config_.cpr);
 
@@ -1023,6 +1081,14 @@ bool Encoder::update() {
     // Predict current pos
     pos_estimate_counts_ += current_meas_period * vel_estimate_counts_;
     pos_cpr_counts_      += current_meas_period * vel_estimate_counts_;
+    if (mode_ == MODE_UART_ABS_TAMAGAWA
+            && (!std::isfinite(pos_estimate_counts_)
+                    || pos_estimate_counts_ >= (float)std::numeric_limits<int32_t>::max()
+                    || pos_estimate_counts_ <= (float)std::numeric_limits<int32_t>::min())) {
+        // Prevent an out-of-range float-to-int conversion in encoder_model().
+        set_error(ERROR_CPR_POLEPAIRS_MISMATCH);
+        return false;
+    }
     // Encoder model
     auto encoder_model = [this](float internal_pos)->int32_t {
         if (config_.mode == MODE_HALL)
@@ -1047,7 +1113,8 @@ bool Encoder::update() {
     }
 
     // Outputs from Encoder for Controller
-    pos_estimate_ = pos_estimate_counts_ / (float)config_.cpr;
+    pos_estimate_ = tamagawa_linear_turn_offset_float_
+            + pos_estimate_counts_ / (float)config_.cpr;
     vel_estimate_ = vel_estimate_counts_ / (float)config_.cpr;
     
     // TODO: we should strictly require that this value is from the previous iteration
