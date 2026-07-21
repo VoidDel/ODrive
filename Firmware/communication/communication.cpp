@@ -40,8 +40,12 @@ void init_communication(void) {
 
     const bool uart_a_reserved_for_tamagawa =
             encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+#if AXIS_COUNT > 1
     const bool uart_b_reserved_for_tamagawa =
             encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+#else
+    const bool uart_b_reserved_for_tamagawa = false;
+#endif
 
     const bool uart_a_available_for_comms =
             odrv.config_.enable_uart_a && uart_a && !uart_a_reserved_for_tamagawa;

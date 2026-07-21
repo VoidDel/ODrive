@@ -687,13 +687,23 @@ extern "C" int main(void) {
     }
 
     const bool axis0_uses_tamagawa = encoders[0].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+#if AXIS_COUNT > 1
     const bool axis1_uses_tamagawa = encoders[1].config_.mode == Encoder::MODE_UART_ABS_TAMAGAWA;
+#endif
     const bool uart_a_required_by_tamagawa =
             (axis0_uses_tamagawa && encoders[0].config_.tamagawa_uart == uart_a)
+#if AXIS_COUNT > 1
             || (axis1_uses_tamagawa && encoders[1].config_.tamagawa_uart == uart_a);
+#else
+            ;
+#endif
     const bool uart_b_required_by_tamagawa =
             (axis0_uses_tamagawa && encoders[0].config_.tamagawa_uart == uart_b)
+#if AXIS_COUNT > 1
             || (axis1_uses_tamagawa && encoders[1].config_.tamagawa_uart == uart_b);
+#else
+            ;
+#endif
 
     // Init GPIOs according to their configured mode
     for (size_t i = 0; i < GPIO_COUNT; ++i) {
