@@ -61,26 +61,35 @@ bool TrapezoidalTrajectory::planTrapezoidal(float Xf, float Xi, float Vi,
     return true;
 }
 
-TrapezoidalTrajectory::Step_t TrapezoidalTrajectory::eval(float t) {
+TrapezoidalTrajectory::Step_t TrapezoidalTrajectory::eval(double t) {
     Step_t trajStep;
-    if (t < 0.0f) {  // Initial Condition
+    const double Ta = static_cast<double>(Ta_);
+    const double Tv = static_cast<double>(Tv_);
+    const double Tf = static_cast<double>(Tf_);
+
+    if (t < 0.0) {  // Initial Condition
         trajStep.Y   = Xi_;
         trajStep.Yd  = Vi_;
         trajStep.Ydd = 0.0f;
-    } else if (t < Ta_) {  // Accelerating
-        trajStep.Y   = Xi_ + Vi_*t + 0.5f*Ar_*SQ(t);
-        trajStep.Yd  = Vi_ + Ar_*t;
+    } else if (t < Ta) {  // Accelerating
+        const float accel_time = static_cast<float>(t);
+        trajStep.Y   = Xi_ + Vi_*accel_time + 0.5f*Ar_*SQ(accel_time);
+        trajStep.Yd  = Vi_ + Ar_*accel_time;
         trajStep.Ydd = Ar_;
-    } else if (t < Ta_ + Tv_) {  // Coasting
-        trajStep.Y   = yAccel_ + Vr_*(t - Ta_);
+    } else if (t < Ta + Tv) {  // Coasting
+        // Convert the exact accumulated time for this evaluation only. This
+        // may quantize individual samples but cannot accumulate a time-rate
+        // error, and it keeps the real-time trajectory math on the FPU.
+        const float coast_time = static_cast<float>(t - Ta);
+        trajStep.Y   = yAccel_ + Vr_*coast_time;
         trajStep.Yd  = Vr_;
         trajStep.Ydd = 0.0f;
-    } else if (t < Tf_) {  // Deceleration
-        float td     = t - Tf_;
+    } else if (t < Tf) {  // Deceleration
+        const float td = static_cast<float>(t - Tf);
         trajStep.Y   = Xf_ + 0.5f*Dr_*SQ(td);
         trajStep.Yd  = Dr_*td;
         trajStep.Ydd = Dr_;
-    } else if (t >= Tf_) {  // Final Condition
+    } else if (t >= Tf) {  // Final Condition
         trajStep.Y   = Xf_;
         trajStep.Yd  = 0.0f;
         trajStep.Ydd = 0.0f;

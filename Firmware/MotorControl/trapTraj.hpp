@@ -17,7 +17,7 @@ public:
 
     bool planTrapezoidal(float Xf, float Xi, float Vi,
                          float Vmax, float Amax, float Dmax);
-    Step_t eval(float t);
+    Step_t eval(double t);
 
     Axis* axis_ = nullptr;  // set by Axis constructor
     Config_t config_;
@@ -37,7 +37,10 @@ public:
 
     float yAccel_;
 
-    float t_;
+    // Keep elapsed trajectory time in double precision. At the 8kHz control
+    // rate a float accumulator starts advancing almost twice as fast after
+    // roughly 2048 seconds, which corrupts long-running trajectory setpoints.
+    double t_;
 };
 
 #endif

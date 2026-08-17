@@ -3,6 +3,7 @@
 #include <limits.h>
 #include <cmath>
 #include <iostream>
+#include <initializer_list>
 #include <random>
 
 #include "MotorControl/utils.hpp"
@@ -21,7 +22,7 @@ public:
     explicit TrapezoidalTrajectory();
     bool planTrapezoidal(float Xf, float Xi, float Vi,
                          float Vmax, float Amax, float Dmax);
-    Step_t eval(float t);
+    Step_t eval(double t);
 
     float Xi_;
     float Xf_;
@@ -38,7 +39,7 @@ public:
 
     float yAccel_;
 
-    float t_;
+    double t_;
 };
 
 
@@ -105,26 +106,32 @@ bool TrapezoidalTrajectory::planTrapezoidal(float Xf, float Xi, float Vi,
     return true;
 }
 
-TrapezoidalTrajectory::Step_t TrapezoidalTrajectory::eval(float t) {
+TrapezoidalTrajectory::Step_t TrapezoidalTrajectory::eval(double t) {
     Step_t trajStep;
-    if (t < 0.0f) {  // Initial Condition
+    const double Ta = static_cast<double>(Ta_);
+    const double Tv = static_cast<double>(Tv_);
+    const double Tf = static_cast<double>(Tf_);
+
+    if (t < 0.0) {  // Initial Condition
         trajStep.Y   = Xi_;
         trajStep.Yd  = Vi_;
         trajStep.Ydd = 0.0f;
-    } else if (t < Ta_) {  // Accelerating
-        trajStep.Y   = Xi_ + Vi_*t + 0.5f*Ar_*SQ(t);
-        trajStep.Yd  = Vi_ + Ar_*t;
+    } else if (t < Ta) {  // Accelerating
+        const float accel_time = static_cast<float>(t);
+        trajStep.Y   = Xi_ + Vi_*accel_time + 0.5f*Ar_*SQ(accel_time);
+        trajStep.Yd  = Vi_ + Ar_*accel_time;
         trajStep.Ydd = Ar_;
-    } else if (t < Ta_ + Tv_) {  // Coasting
-        trajStep.Y   = yAccel_ + Vr_*(t - Ta_);
+    } else if (t < Ta + Tv) {  // Coasting
+        const float coast_time = static_cast<float>(t - Ta);
+        trajStep.Y   = yAccel_ + Vr_*coast_time;
         trajStep.Yd  = Vr_;
         trajStep.Ydd = 0.0f;
-    } else if (t < Tf_) {  // Deceleration
-        float td     = t - Tf_;
+    } else if (t < Tf) {  // Deceleration
+        const float td = static_cast<float>(t - Tf);
         trajStep.Y   = Xf_ + 0.5f*Dr_*SQ(td);
         trajStep.Yd  = Dr_*td;
         trajStep.Ydd = Dr_;
-    } else if (t >= Tf_) {  // Final Condition
+    } else if (t >= Tf) {  // Final Condition
         trajStep.Y   = Xf_;
         trajStep.Yd  = 0.0f;
         trajStep.Ydd = 0.0f;
@@ -141,7 +148,7 @@ static_assert(sizeof(float) * CHAR_BIT == 32);
 void run_trajectory_test(float goal, float position, float velocity, float Vmax, float Amax, float Dmax) {
     float dt = 0.000125f;
     int replan_interval = 10; // must be > 2 (see note below)
-    float t = 0.0f;
+    double t = 0.0;
     float Vmax_test = std::max(Vmax, std::abs(velocity));
 
     TrapezoidalTrajectory traj{};
@@ -151,14 +158,14 @@ void run_trajectory_test(float goal, float position, float velocity, float Vmax,
     do {
         if (replan_counter <= 0) {
             CHECK(traj.planTrapezoidal(goal, position, velocity, Vmax, Amax, Dmax));
-            t = 0.0f;
+            t = 0.0;
             replan_counter = replan_interval;
         } else {
             replan_counter--;
         }
 
         TrapezoidalTrajectory::Step_t step = traj.eval(t);
-        t += dt;
+        t += static_cast<double>(dt);
 
         //std::cerr << "vel: " << step.Yd << ", pos: " << step.Y << "\n";
         
@@ -192,7 +199,7 @@ void run_trajectory_test(float goal, float position, float velocity, float Vmax,
         //}
         position = step.Y;
 
-    } while (t <= traj.Tf_);
+    } while (t <= static_cast<double>(traj.Tf_));
 
     CHECK(position >= goal - 1.0f);
     CHECK(position <= goal + 1.0f);
@@ -202,6 +209,28 @@ void run_trajectory_test(float goal, float position, float velocity, float Vmax,
 
 
 TEST_SUITE("Trajectory Planner") {
+    TEST_CASE("long trajectory time remains accurate across 2048 seconds") {
+        constexpr float dt = 0.000125f;
+        constexpr float velocity = 30.0f;
+        TrapezoidalTrajectory traj{};
+
+        CHECK(traj.planTrapezoidal(1000000.0f, 0.0f, velocity,
+                velocity, 1000.0f, 1000.0f));
+
+        for (double base_time : {2048.0, 4096.0, 8192.0}) {
+            traj.t_ = base_time;
+            const float start_position = traj.eval(traj.t_).Y;
+            for (int i = 0; i < 8000; ++i) {
+                traj.t_ += static_cast<double>(dt);
+            }
+            const float end_position = traj.eval(traj.t_).Y;
+
+            CHECK(traj.t_ - base_time == doctest::Approx(1.0).epsilon(1e-6));
+            CHECK(static_cast<double>(end_position - start_position)
+                    == doctest::Approx(static_cast<double>(velocity)).epsilon(1e-4));
+        }
+    }
+
     // these form a triangle trajectory because 2*v^2/(2*a) = 2 * 27712^2 / (2*22288) = 34456 > 16384
     TEST_CASE("neg-dir-triangle") {
         run_trajectory_test(-8192.0f, 8192.0f, 0.0f, 27712.0f, 22288.0f, 22288.0f);

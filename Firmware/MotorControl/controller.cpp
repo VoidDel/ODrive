@@ -33,7 +33,7 @@ void Controller::move_to_pos(float goal_point) {
                                  axis_->trap_traj_.config_.vel_limit,
                                  axis_->trap_traj_.config_.accel_limit,
                                  axis_->trap_traj_.config_.decel_limit);
-    axis_->trap_traj_.t_ = 0.0f;
+    axis_->trap_traj_.t_ = 0.0;
     trajectory_done_ = false;
 }
 
@@ -251,7 +251,7 @@ bool Controller::update() {
             if (trajectory_done_)
                 break;
             
-            if (axis_->trap_traj_.t_ > axis_->trap_traj_.Tf_) {
+            if (axis_->trap_traj_.t_ > static_cast<double>(axis_->trap_traj_.Tf_)) {
                 // Drop into position control mode when done to avoid problems on loop counter delta overflow
                 config_.control_mode = CONTROL_MODE_POSITION_CONTROL;
                 pos_setpoint_ = axis_->trap_traj_.Xf_;
@@ -263,7 +263,7 @@ bool Controller::update() {
                 pos_setpoint_ = traj_step.Y;
                 vel_setpoint_ = traj_step.Yd;
                 torque_setpoint_ = traj_step.Ydd * config_.inertia;
-                axis_->trap_traj_.t_ += current_meas_period;
+                axis_->trap_traj_.t_ += static_cast<double>(current_meas_period);
             }
             anticogging_pos_estimate = pos_setpoint_; // FF the position setpoint instead of the pos_estimate
         } break;
